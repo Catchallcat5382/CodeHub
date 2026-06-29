@@ -10,6 +10,7 @@ build/
 build_out/
 .codehub_runtime/
 _internal/
+.codehub_tools/
 CodeHubApp.spec
 *.spec
 
@@ -32,3 +33,4 @@ README.txt
 # Windows junk
 Thumbs.db
 Desktop.ini
+*.lnk
