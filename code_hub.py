@@ -3018,45 +3018,83 @@ root.mainloop()
         if not getattr(sys, "frozen", False):
             messagebox.showinfo(APP_NAME, "Source mode detected. Use Run Local Updater to rebuild the exe.")
             return
+
         exe_path = Path(sys.executable).resolve()
         tmp_exe = Path(tempfile.gettempdir()) / "CodeHub_update.exe"
         bat_path = Path(tempfile.gettempdir()) / "CodeHub_apply_update.bat"
+        current_pid = os.getpid()
+
         self.settings["last_update_sha"] = latest_sha
         write_json(SETTINGS_PATH, self.settings)
+
         script = f"""@echo off
-color 0A
-title CodeHub Update
-echo [CodeHub] downloading latest package from GitHub...
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{GITHUB_EXE_URL}' -OutFile '{tmp_exe}'"
-if errorlevel 1 (
-    echo [CodeHub] download failed.
-    pause
-    exit /b 1
-)
-echo [CodeHub] waiting for app to close...
-timeout /t 2 /nobreak >nul
-echo [CodeHub] replacing executable...
-copy /y "{tmp_exe}" "{exe_path}" >nul
-echo [CodeHub] restarting CodeHub...
-start "" "{exe_path}"
-del "{tmp_exe}" >nul 2>nul
-del "%~f0" >nul 2>nul
-"""
+    setlocal
+    color 0A
+    title CodeHub Update
+
+    echo [CodeHub] downloading latest package from GitHub...
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{GITHUB_EXE_URL}' -OutFile '{tmp_exe}'"
+    if errorlevel 1 (
+        echo [CodeHub] download failed.
+        pause
+        exit /b 1
+    )
+
+    echo [CodeHub] waiting for old app to close...
+    :WAIT_APP
+    tasklist /FI "PID eq {current_pid}" | find "{current_pid}" >nul
+    if not errorlevel 1 (
+        timeout /t 1 /nobreak >nul
+        goto WAIT_APP
+    )
+
+    echo [CodeHub] replacing executable...
+    copy /y "{tmp_exe}" "{exe_path}" >nul
+    if errorlevel 1 (
+        echo [CodeHub] replace failed.
+        pause
+        exit /b 1
+    )
+
+    echo [CodeHub] restarting CodeHub...
+    start "" "{exe_path}"
+
+    del "{tmp_exe}" >nul 2>nul
+    del "%~f0" >nul 2>nul
+
+    exit /b 0
+    """
+
         bat_path.write_text(script, encoding="utf-8")
-        subprocess.Popen(["cmd", "/c", "start", "", str(bat_path)], shell=False)
-        self.close()
+
+        subprocess.Popen(
+            ["cmd.exe", "/c", str(bat_path)],
+            cwd=str(exe_path.parent),
+            creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+        )
+
+        self.root.after(150, self.close)
 
     def run_local_updater(self):
         candidates = [
             APP_ROOT / "AppUpdater.bat",
             Path(r"F:\Auto Hotkey\Python\CodeHub\AppUpdater.bat"),
         ]
+
         updater = next((path for path in candidates if path.exists()), None)
+
         if not updater:
             messagebox.showerror(APP_NAME, "Could not find AppUpdater.bat.")
             return
-        subprocess.Popen(["cmd", "/c", "start", "", str(updater)], cwd=str(updater.parent), shell=False)
+
+        subprocess.Popen(
+            ["cmd.exe", "/c", str(updater)],
+            cwd=str(updater.parent),
+            creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+        )
+
         self.status.set("Local updater launched")
+        self.root.after(150, self.close)
 
     def save_ui_settings(self):
         try:
