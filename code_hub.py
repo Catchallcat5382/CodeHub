@@ -143,6 +143,9 @@ def hide_console_if_present():
         return
     try:
         import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)
         ctypes.windll.kernel32.FreeConsole()
     except Exception:
         pass
@@ -167,8 +170,13 @@ def startup_console():
         "[SAFE] paths, names, and IPs are redacted in loader output",
         "[READY] package load complete; opening interface",
     ]
-    for line in lines:
+    total = len(lines)
+    for i, line in enumerate(lines, 1):
         print(line, flush=True)
+        width = 28
+        done = int(width * i / total)
+        bar = "#" * done + "-" * (width - done)
+        print(f"[LOAD] [{bar}] {int(i * 100 / total):3d}% packages ready", flush=True)
         time.sleep(0.025)
 
 
@@ -842,6 +850,7 @@ class CodeHubApp:
         set_windows_app_id()
 
         self.root = Tk()
+        self.root.withdraw()
         self.root.title(APP_NAME)
         self.root.geometry(self.center_geometry(1120, 720))
         self.root.minsize(860, 540)
@@ -918,11 +927,18 @@ class CodeHubApp:
         self.start_hotkeys()
         self.start_auto_refresh()
         self.root.bind("<Map>", self.restore_borderless_after_minimize)
-        self.root.after(250, self.force_taskbar_icon)
-        self.root.after(450, hide_console_if_present)
+        self.root.after(100, self.show_ready_window)
         if self.auto_update.get():
             self.root.after(1200, lambda: self.check_for_updates(auto=True))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+
+    def show_ready_window(self):
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        self.root.update_idletasks()
+        self.force_taskbar_icon()
+        self.root.after(150, hide_console_if_present)
 
     def center_geometry(self, width, height):
         screen_w = self.root.winfo_screenwidth()

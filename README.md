@@ -1,89 +1,62 @@
-CodeHub
-=======
+# CodeHub
 
-Location requested:
-F:\Auto Hotkey\Python\CodeHub
+CodeHub is a desktop macro and script workspace for recording input, exporting automation scripts, editing generated code, and building small utility UIs.
 
-Run:
-Best app launch:
-1. Open "F:\Auto Hotkey\Python\CodeHub"
-2. Run CodeHub.exe
-3. Right-click CodeHub on the taskbar and pin it.
+It is designed around a simple workflow: record actions, save them as reusable scripts, review or edit the output, and keep everything organized in one app.
 
-CodeHub.exe is the bootstrap app:
-- It opens the command prompt style startup screen.
-- It checks requirements.txt.
-- On first launch, or when requirements.txt changes, it installs/updates packages.
-- Then it launches the real GUI from the hidden .codehub_runtime folder.
+## Features
 
-Shortcut launch:
-- Open CodeHub.lnk. It points to CodeHub.exe and uses the CodeHub icon.
+- Record keyboard and mouse input with `F1` to start and `F2` to stop.
+- Export recordings as AutoHotkey v2 or Python scripts.
+- Exit CodeHub with `F9`.
+- Exit generated scripts with `Numpad 5`.
+- Save settings, recordings, assistant data, and workspace state with JSON.
+- Browse, edit, rename, delete, and run scripts from the workspace.
+- Use a visual Code Builder to generate starter AutoHotkey v2 or Python Tkinter UI code.
+- Convert simple Python macro snippets to AutoHotkey v2 and AutoHotkey v2 snippets to Python.
+- Preview assistant-generated edits as a diff before applying them.
+- Undo assistant edits.
+- Review recordings with event stats, input timelines, and optional screenshot frames.
+- Configure replay screenshot FPS.
+- Check GitHub for updates from inside the app.
+- Enable optional auto-update on startup.
 
-Script/dev launch:
-1. Open PowerShell.
-2. cd "F:\Auto Hotkey\Python\CodeHub"
-3. py -m pip install -r requirements.txt
-4. py code_hub.py
+## Generated Scripts
 
-Hacker console launch:
-- Open "Launch CodeHub.bat".
-- This keeps the command prompt bootstrap effect.
+Generated scripts include:
 
-If py does not work, use python instead.
+- Clear comments explaining what the script does.
+- `F1` start and `F2` stop behavior where applicable.
+- `Numpad 5` exit behavior.
+- A small transparent top-right watermark that says `Made by Cat`.
+- Comments showing where to remove the watermark code if desired.
 
-Main hotkeys:
-- F1 starts recording in CodeHub and starts generated scripts.
-- F2 stops recording in CodeHub and stops generated scripts.
-- Numpad 5 exits generated scripts.
-- Normal and advanced recordings preserve key press/release timing, so held keys replay as held keys.
+## Updates
 
-What is included:
-- code_hub.py: the app.
-- requirements.txt: Python packages.
-- assets\CodeHub Logo.png: custom app logo.
-- assets\CodeHub Logo transparent.png: transparent app/taskbar icon version.
-- data/settings.json: persistent settings.
-- data/recordings.json: cached macro recordings.
-- data/knowledge.json: editable helper knowledge.
-- exports/: generated scripts appear here by default.
+CodeHub can check the public GitHub repository for a newer build. Manual update checks are available in Settings, and automatic update checks can be enabled there too.
 
-Recording flow:
-1. Pick recording mode and default export type before recording.
-2. Press F1 to start.
-3. Press F2 to stop.
-4. A save popup asks for the macro name and whether to export as Default, AutoHotkey v2, or Python.
-5. CodeHub saves the recording to JSON and exports the script.
+The distributed executable is a single-file build. Because it contains an embedded Python runtime and required packages, first startup can take longer than a normal native app while the runtime is prepared.
 
-Workspace:
-The Workspace tab lets you open, edit, save, save as, rename, and delete generated scripts.
-Deleting files requires enabling delete permission in Tools > Permissions.
+## Source Use
 
-Tools:
-The Tools tab has separate workspaces for assistant notes, Python/AHK conversion notes, OCR capture around your mouse, and permissions.
+Install dependencies:
 
-Watermark:
-CodeHub itself does not show a watermark.
-Every generated script uses a tiny, very transparent top-right watermark saying "Made by Cat".
-Every exported script includes comments showing what to delete if you want the watermark removed.
+```powershell
+python -m pip install -r requirements.txt
+```
 
-Window behavior:
-CodeHub uses a normal Windows app window, so it can be resized, minimized, restored from the taskbar, and shown with the app logo.
+Run from source:
 
-Auto refresh:
-The app rescans exported scripts and JSON recordings in the background. If you delete a script outside CodeHub, the workspace list refreshes automatically.
+```powershell
+python code_hub.py
+```
 
-Review:
-The Review tab can load a saved macro, replay the event timeline visually, show pressed keys, speed, click/key counts, and saved review screenshots. It is not a full video recorder yet, but it captures lightweight screenshots during recording when enabled in Settings.
+Build a single-file executable:
 
-Settings:
-Permissions moved to Settings and are saved in data\settings.json. You can also change UI font size, compact/comfortable density, export folder, and review screenshot capture.
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\build.ps1
+```
 
-GitHub/release packaging:
-- Use .codehub_tools\Create Release Package.ps1 to create release\CodeHub-release.zip.
-- The release package ships the executable/runtime, not the editable source script.
-- This prevents casual source browsing, but no distributed desktop app can fully prevent reverse engineering.
+## Notes
 
-OCR:
-Python can read text it sees on screen through screenshots plus OCR. This is not the same as reading hidden game memory.
-For OCR, install the requirements and install the Windows Tesseract OCR program. If Tesseract is not on PATH, pytesseract cannot read text.
-Use OCR and automation only where the app/game rules allow it.
+CodeHub uses normal screen, keyboard, and mouse automation APIs. It does not read private game memory. Use automation only where it is allowed by the software or game you are using.
