@@ -7,6 +7,8 @@ import sys
 import threading
 import time
 import difflib
+import tempfile
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from tkinter import (
@@ -53,6 +55,10 @@ C = {
 
 APP_NAME = "CodeHub"
 MAKER_NAME = "Macro Maker"
+GITHUB_REPO = "Catchallcat5382/CodeHub"
+GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
+GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/raw/main/CodeHub.exe"
+BUILD_COMMIT = "local-build"
 if getattr(sys, "frozen", False):
     APP_ROOT = Path(sys.executable).resolve().parent
     if APP_ROOT.name == ".codehub_runtime":
@@ -84,7 +90,10 @@ DEFAULT_SETTINGS = {
     "ui_font_size": 9,
     "ui_density": "compact",
     "record_screenshots": True,
-    "review_capture_interval_ms": 2000,
+    "review_capture_fps": 60,
+    "review_capture_interval_ms": 1000 // 60,
+    "auto_update": False,
+    "last_update_sha": "",
 }
 
 DEFAULT_KNOWLEDGE = {
@@ -148,19 +157,19 @@ def startup_console():
     except Exception:
         pass
     lines = [
-        "[BOOT] CodeHub runtime handshake",
-        "[SCAN] redacting user/profile paths",
-        "[GIT] public update channel ready",
-        "[PACK] embedded app assets mounted",
-        "[UI] custom chrome enabled",
-        "[HOTKEY] F1 start | F2 stop | F9 exit",
-        "[SAFE] personal identifiers: [REDACTED]",
-        "[READY] launching interface",
+        "[BOOT] CodeHub package loader",
+        "[PY] unpacking embedded Python runtime and Tk UI packages",
+        "[PY] loading pynput, pillow, mss, psutil, requests",
+        "[CACHE] preparing LocalAppData JSON cache",
+        "[GIT] public update channel armed",
+        "[PACK] mounting embedded assets and compiled source",
+        "[UI] waiting for every package before showing CodeHub",
+        "[SAFE] paths, names, and IPs are redacted in loader output",
+        "[READY] package load complete; opening interface",
     ]
     for line in lines:
         print(line, flush=True)
         time.sleep(0.025)
-    hide_console_if_present()
 
 
 def read_json(path, fallback):
@@ -875,6 +884,8 @@ class CodeHubApp:
         self.ui_font_size = StringVar(value=str(self.settings.get("ui_font_size", 9)))
         self.ui_density = StringVar(value=self.settings.get("ui_density", "compact"))
         self.record_screenshots = BooleanVar(value=bool(self.settings.get("record_screenshots", True)))
+        self.auto_update = BooleanVar(value=bool(self.settings.get("auto_update", False)))
+        self.review_fps = StringVar(value=str(self.settings.get("review_capture_fps", 60)))
         self._last_file_snapshot = set()
         self._last_recordings_signature = ""
         self._last_recordings_mtime = None
@@ -897,6 +908,7 @@ class CodeHubApp:
         self.review_paused = False
         self.review_play_index = 0
         self.review_speed = DoubleVar(value=1.0)
+        self._capture_busy = False
         self.ai_pending_path = None
         self.ai_pending_text = ""
         self.ai_undo_stack = []
@@ -907,6 +919,9 @@ class CodeHubApp:
         self.start_auto_refresh()
         self.root.bind("<Map>", self.restore_borderless_after_minimize)
         self.root.after(250, self.force_taskbar_icon)
+        self.root.after(450, hide_console_if_present)
+        if self.auto_update.get():
+            self.root.after(1200, lambda: self.check_for_updates(auto=True))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     def center_geometry(self, width, height):
@@ -1315,8 +1330,69 @@ class CodeHubApp:
 
         tool_nb.add(self._assistant_tool(tool_nb), text="  Assistant  ")
         tool_nb.add(self._converter_tool(tool_nb), text="  Converter  ")
+        tool_nb.add(self._builder_tool(tool_nb), text="  Code Builder  ")
         tool_nb.add(self._position_tool(tool_nb), text="  Position Logger  ")
 
+        return tab
+
+    def _builder_tool(self, parent):
+        tab = Frame(parent, bg=C["bg"])
+        pad = self._pad_frame(tab)
+
+        self.builder_blocks = []
+        self.builder_kind = StringVar(value="Button")
+        self.builder_export = StringVar(value="AutoHotkey v2")
+        self.builder_text = StringVar(value="Run")
+        self.builder_x = StringVar(value="20")
+        self.builder_y = StringVar(value="20")
+        self.builder_w = StringVar(value="140")
+        self.builder_h = StringVar(value="32")
+
+        self._section(pad, "Visual Code Builder")
+        ttk.Label(
+            pad,
+            text="Add UI blocks, preview the layout list, then generate script code into the output or editor.",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(0, 8))
+
+        controls = Frame(pad, bg=C["panel2"], padx=10, pady=8)
+        controls.pack(fill=X, pady=(0, 8))
+        for label, var, values, width in [
+            ("Block", self.builder_kind, ["Label", "Button", "Input", "Checkbox", "Slider"], 12),
+            ("Code", self.builder_export, ["AutoHotkey v2", "Python Tkinter"], 16),
+        ]:
+            ttk.Label(controls, text=f"{label}:", style="PanelMuted2.TLabel").pack(side=LEFT, padx=(0, 4))
+            ttk.Combobox(controls, textvariable=var, values=values, state="readonly", width=width).pack(side=LEFT, padx=(0, 8))
+        ttk.Label(controls, text="Text:", style="PanelMuted2.TLabel").pack(side=LEFT, padx=(0, 4))
+        ttk.Entry(controls, textvariable=self.builder_text, width=18).pack(side=LEFT, padx=(0, 8))
+        for label, var in [("X", self.builder_x), ("Y", self.builder_y), ("W", self.builder_w), ("H", self.builder_h)]:
+            ttk.Label(controls, text=f"{label}:", style="PanelMuted2.TLabel").pack(side=LEFT, padx=(0, 3))
+            ttk.Entry(controls, textvariable=var, width=5).pack(side=LEFT, padx=(0, 6))
+
+        buttons = Frame(pad, bg=C["bg"], pady=4)
+        buttons.pack(fill=X)
+        ttk.Button(buttons, text="Add Block", style="Green.TButton", command=self.builder_add_block).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(buttons, text="Clear", style="Red.TButton", command=self.builder_clear).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(buttons, text="Generate", style="Accent.TButton", command=self.builder_generate).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(buttons, text="Send to Editor", style="Ghost.TButton", command=self.builder_send_to_editor).pack(side=LEFT)
+
+        panes = ttk.PanedWindow(pad, orient=HORIZONTAL)
+        panes.pack(fill=BOTH, expand=True, pady=(8, 0))
+        left = Frame(panes, bg=C["bg"])
+        right = Frame(panes, bg=C["bg"])
+        panes.add(left, weight=2)
+        panes.add(right, weight=3)
+
+        self._section(left, "Blocks")
+        self.builder_list = self._code_box(left, height=22)
+        self.builder_list.configure(fg=C["cyan"])
+        self.builder_list.pack(fill=BOTH, expand=True)
+
+        self._section(right, "Generated Code")
+        self.builder_output = self._code_box(right, height=22)
+        self.builder_output.configure(fg=C["green"])
+        self.builder_output.pack(fill=BOTH, expand=True)
+        self.builder_refresh_list()
         return tab
 
     def _assistant_tool(self, parent):
@@ -1494,13 +1570,28 @@ class CodeHubApp:
         ttk.Button(ar, text="Apply", style="Accent.TButton", command=self.save_ui_settings).pack(side=LEFT)
         ttk.Button(ar, text="Toggle Fullscreen", style="Ghost.TButton", command=self.toggle_fullscreen).pack(side=LEFT, padx=(8, 0))
 
+        self._section(pad, "Updates")
+        ur = Frame(pad, bg=C["bg"], pady=4)
+        ur.pack(fill=X)
+        ttk.Checkbutton(ur, text="Auto update on startup", variable=self.auto_update, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
+        ttk.Button(ur, text="Check for Updates", style="Accent.TButton", command=self.check_for_updates).pack(side=LEFT, padx=(0, 8))
+        ttk.Button(ur, text="Run Local Updater", style="Ghost.TButton", command=self.run_local_updater).pack(side=LEFT)
+
+        self._section(pad, "Replay Capture")
+        rr = Frame(pad, bg=C["bg"], pady=4)
+        rr.pack(fill=X)
+        ttk.Checkbutton(rr, text="Capture review screenshots while recording", variable=self.record_screenshots, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
+        ttk.Label(rr, text="FPS:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        ttk.Combobox(rr, textvariable=self.review_fps, values=["10", "15", "24", "30", "60"],
+                     state="readonly", width=6).pack(side=LEFT, padx=(0, 8))
+        ttk.Button(rr, text="Save Replay FPS", style="Ghost.TButton", command=self.save_permissions).pack(side=LEFT)
+
         self._section(pad, "Permissions")
         pr = Frame(pad, bg=C["bg"], pady=4)
         pr.pack(fill=X)
         ttk.Checkbutton(pr, text="Allow assistant to edit the open script", variable=self.ai_can_edit, command=self.save_permissions).pack(anchor="w", pady=2)
         ttk.Checkbutton(pr, text="Allow assistant to delete selected files", variable=self.ai_can_delete, command=self.save_permissions).pack(anchor="w", pady=2)
         ttk.Checkbutton(pr, text="Allow assistant to run script commands", variable=self.ai_can_run, command=self.save_permissions).pack(anchor="w", pady=2)
-        ttk.Checkbutton(pr, text="Capture review screenshots while recording", variable=self.record_screenshots, command=self.save_permissions).pack(anchor="w", pady=2)
 
         self._section(pad, "Data Paths")
         info = self._text_box(pad, height=8, fg=C["text2"])
@@ -1549,7 +1640,8 @@ class CodeHubApp:
         self.rec_status_frame.configure(bg=C["red"])
         self.recorder.start(self.mode.get())
         self.capture_review_snapshot("start")
-        self.root.after(1000, self.capture_review_tick)
+        fps = self.builder_number(self.review_fps.get(), int(self.settings.get("review_capture_fps", 60)))
+        self.root.after(max(16, int(1000 / max(1, fps))), self.capture_review_tick)
 
     def stop_recording(self):
         if self.macro_locked or not self.is_recording:
@@ -1595,29 +1687,39 @@ class CodeHubApp:
     def capture_review_snapshot(self, label):
         if not self.record_screenshots.get():
             return
-        try:
-            import mss
-            from PIL import Image
-            review_dir = DATA_DIR / "review_frames"
-            review_dir.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            path = review_dir / f"{stamp}_{label}.png"
-            with mss.mss() as grabber:
-                monitor = grabber.monitors[1]
-                shot = grabber.grab(monitor)
-                image = Image.frombytes("RGB", shot.size, shot.rgb)
-                image.thumbnail((640, 360))
-                image.save(path)
-            self.review_shots.append(str(path))
-        except Exception:
-            pass
+        if self._capture_busy:
+            return
+
+        def worker():
+            self._capture_busy = True
+            try:
+                import mss
+                from PIL import Image
+                review_dir = DATA_DIR / "review_frames"
+                review_dir.mkdir(parents=True, exist_ok=True)
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                path = review_dir / f"{stamp}_{label}.png"
+                with mss.mss() as grabber:
+                    monitor = grabber.monitors[1]
+                    shot = grabber.grab(monitor)
+                    image = Image.frombytes("RGB", shot.size, shot.rgb)
+                    image.thumbnail((640, 360))
+                    image.save(path, optimize=True)
+                self.review_shots.append(str(path))
+            except Exception:
+                pass
+            finally:
+                self._capture_busy = False
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def capture_review_tick(self):
         if not self.is_recording:
             return
         self.capture_review_snapshot("tick")
-        interval = int(self.settings.get("review_capture_interval_ms", 2000))
-        self.root.after(max(750, interval), self.capture_review_tick)
+        fps = self.builder_number(self.review_fps.get(), int(self.settings.get("review_capture_fps", 60)))
+        interval = max(16, int(1000 / max(1, fps)))
+        self.root.after(interval, self.capture_review_tick)
 
     def refresh_recordings(self):
         if not hasattr(self, "recording_list"):
@@ -2374,6 +2476,12 @@ class CodeHubApp:
         request = request.lower()
         notes = []
         new_text = text
+        if is_ahk and any(k in request for k in ("ui", "gui", "window", "textbox", "text box", "button", "input")):
+            new_text = self.default_ahk_ui_code()
+            notes.append("generated a working AutoHotkey v2 GUI")
+        elif not is_ahk and any(k in request for k in ("ui", "gui", "window", "textbox", "text box", "button", "input")):
+            new_text = self.default_python_ui_code()
+            notes.append("generated a working Python Tkinter UI")
         if "convert" in request and ("python" in request or "ahk" in request or "autohotkey" in request):
             if is_ahk and "python" in request:
                 new_text, conv_notes = self.ahk_to_python(text)
@@ -2397,6 +2505,62 @@ class CodeHubApp:
             new_text = text.rstrip() + f"\n\n{prefix} CodeHub assistant reviewed — no rewrite rule matched.\n"
             notes.append("added review note")
         return new_text, sorted(set(notes))
+
+    def default_ahk_ui_code(self):
+        return """#Requires AutoHotkey v2.0
+#SingleInstance Force
+
+; Built by CodeHub assistant.
+; F9 exits this UI. Edit labels, sizes, and button actions below.
+app := Gui('+AlwaysOnTop', 'CodeHub AHK UI')
+app.BackColor := '101820'
+app.SetFont('s10 cE8F0F8', 'Segoe UI')
+
+app.AddText('x20 y18 w280 h24', 'CodeHub AutoHotkey v2 UI')
+nameBox := app.AddEdit('x20 y52 w260 h30', 'Type here')
+statusText := app.AddText('x20 y96 w320 h24', 'Ready')
+runBtn := app.AddButton('x20 y134 w120 h34', 'Run')
+clearBtn := app.AddButton('x150 y134 w120 h34', 'Clear')
+enabled := app.AddCheckbox('x20 y184 w180 h28', 'Enable option')
+
+runBtn.OnEvent('Click', (*) => statusText.Text := 'Ran with: ' nameBox.Value)
+clearBtn.OnEvent('Click', (*) => (nameBox.Value := '', statusText.Text := 'Cleared'))
+
+app.Show('w380 h250')
+F9::ExitApp
+"""
+
+    def default_python_ui_code(self):
+        return """import tkinter as tk
+from tkinter import ttk
+
+# Built by CodeHub assistant.
+# Edit labels, sizes, and button actions below.
+root = tk.Tk()
+root.title('CodeHub Python UI')
+root.geometry('380x250')
+root.configure(bg='#101820')
+
+title = tk.Label(root, text='CodeHub Python UI', bg='#101820', fg='#e8f0f8', font=('Segoe UI', 12, 'bold'))
+title.place(x=20, y=18, width=280, height=24)
+name_box = ttk.Entry(root)
+name_box.insert(0, 'Type here')
+name_box.place(x=20, y=52, width=260, height=30)
+status = tk.Label(root, text='Ready', bg='#101820', fg='#30c8e8')
+status.place(x=20, y=96, width=320, height=24)
+
+def run():
+    status.configure(text=f'Ran with: {name_box.get()}')
+
+def clear():
+    name_box.delete(0, 'end')
+    status.configure(text='Cleared')
+
+ttk.Button(root, text='Run', command=run).place(x=20, y=134, width=120, height=34)
+ttk.Button(root, text='Clear', command=clear).place(x=150, y=134, width=120, height=34)
+ttk.Checkbutton(root, text='Enable option').place(x=20, y=184, width=180, height=28)
+root.mainloop()
+"""
 
     def generate_ai_review(self):
         path = self.ai_target_path()
@@ -2478,6 +2642,126 @@ class CodeHubApp:
         self.editor.insert("1.0", script + "\n")
         self.tabs.select(1)
         self.status.set("Converted code placed in editor")
+
+    def builder_number(self, value, fallback):
+        try:
+            return max(0, int(float(str(value).strip())))
+        except Exception:
+            return fallback
+
+    def builder_add_block(self):
+        block = {
+            "kind": self.builder_kind.get(),
+            "text": self.builder_text.get().strip() or self.builder_kind.get(),
+            "x": self.builder_number(self.builder_x.get(), 20),
+            "y": self.builder_number(self.builder_y.get(), 20),
+            "w": self.builder_number(self.builder_w.get(), 140),
+            "h": self.builder_number(self.builder_h.get(), 32),
+        }
+        self.builder_blocks.append(block)
+        self.builder_y.set(str(block["y"] + block["h"] + 10))
+        self.builder_refresh_list()
+        self.builder_generate()
+
+    def builder_clear(self):
+        self.builder_blocks = []
+        self.builder_refresh_list()
+        self.builder_output.delete("1.0", END)
+
+    def builder_refresh_list(self):
+        if not hasattr(self, "builder_list"):
+            return
+        self.builder_list.delete("1.0", END)
+        if not self.builder_blocks:
+            self.builder_list.insert(END, "No blocks yet. Add a Label, Button, Input, Checkbox, or Slider.\n")
+            return
+        for i, block in enumerate(self.builder_blocks, 1):
+            self.builder_list.insert(
+                END,
+                f"{i:02d}. {block['kind']:<8} text={block['text']!r} "
+                f"x={block['x']} y={block['y']} w={block['w']} h={block['h']}\n",
+            )
+
+    def builder_generate(self):
+        if self.builder_export.get() == "Python Tkinter":
+            code = self.builder_python_code()
+        else:
+            code = self.builder_ahk_code()
+        self.builder_output.delete("1.0", END)
+        self.builder_output.insert(END, code)
+
+    def builder_send_to_editor(self):
+        if not self.ai_can_edit.get():
+            messagebox.showwarning(APP_NAME, "Enable edit permission in Settings first.")
+            return
+        code = self.builder_output.get("1.0", END).strip()
+        if not code:
+            self.builder_generate()
+            code = self.builder_output.get("1.0", END).strip()
+        self.editor.delete("1.0", END)
+        self.editor.insert("1.0", code + "\n")
+        self.tabs.select(1)
+        self.status.set("Builder code sent to editor")
+
+    def builder_ahk_code(self):
+        lines = [
+            "#Requires AutoHotkey v2.0",
+            "#SingleInstance Force",
+            "",
+            "; Built with CodeHub Code Builder.",
+            "; Edit block positions by changing x/y/w/h values below.",
+            "ui := Gui('+AlwaysOnTop', 'CodeHub Built UI')",
+            "ui.BackColor := '101820'",
+            "ui.SetFont('s9 cE8F0F8', 'Segoe UI')",
+        ]
+        for i, b in enumerate(self.builder_blocks, 1):
+            opts = f"x{b['x']} y{b['y']} w{b['w']} h{b['h']}"
+            text = b["text"].replace("'", "\\'")
+            kind = b["kind"]
+            if kind == "Label":
+                lines.append(f"ui.AddText('{opts}', '{text}')")
+            elif kind == "Button":
+                lines.append(f"btn{i} := ui.AddButton('{opts}', '{text}')")
+                lines.append(f"btn{i}.OnEvent('Click', (*) => MsgBox('{text} clicked'))")
+            elif kind == "Input":
+                lines.append(f"edit{i} := ui.AddEdit('{opts}', '{text}')")
+            elif kind == "Checkbox":
+                lines.append(f"check{i} := ui.AddCheckbox('{opts}', '{text}')")
+            elif kind == "Slider":
+                lines.append(f"slider{i} := ui.AddSlider('{opts} Range0-100 ToolTip', 50)")
+        lines.extend(["", "ui.Show('w520 h360')", "Esc::ExitApp"])
+        return "\n".join(lines) + "\n"
+
+    def builder_python_code(self):
+        lines = [
+            "import tkinter as tk",
+            "from tkinter import ttk",
+            "",
+            "# Built with CodeHub Code Builder.",
+            "# Edit block positions by changing x/y/width/height values below.",
+            "root = tk.Tk()",
+            "root.title('CodeHub Built UI')",
+            "root.geometry('520x360')",
+            "root.configure(bg='#101820')",
+        ]
+        for i, b in enumerate(self.builder_blocks, 1):
+            text = b["text"].replace("\\", "\\\\").replace("'", "\\'")
+            kind = b["kind"]
+            if kind == "Label":
+                widget = f"tk.Label(root, text='{text}', bg='#101820', fg='#e8f0f8')"
+            elif kind == "Button":
+                widget = f"ttk.Button(root, text='{text}', command=lambda: print('{text} clicked'))"
+            elif kind == "Input":
+                widget = f"ttk.Entry(root)"
+            elif kind == "Checkbox":
+                lines.append(f"var{i} = tk.BooleanVar(value=False)")
+                widget = f"ttk.Checkbutton(root, text='{text}', variable=var{i})"
+            else:
+                widget = "ttk.Scale(root, from_=0, to=100, orient='horizontal')"
+            lines.append(f"widget{i} = {widget}")
+            lines.append(f"widget{i}.place(x={b['x']}, y={b['y']}, width={b['w']}, height={b['h']})")
+        lines.extend(["", "root.mainloop()"])
+        return "\n".join(lines) + "\n"
 
     def python_to_ahk(self, source):
         notes = []
@@ -2663,8 +2947,99 @@ class CodeHubApp:
         self.settings["ai_can_delete"] = self.ai_can_delete.get()
         self.settings["ai_can_run"] = self.ai_can_run.get()
         self.settings["record_screenshots"] = self.record_screenshots.get()
+        self.settings["auto_update"] = self.auto_update.get()
+        fps = max(1, min(60, self.builder_number(self.review_fps.get(), 60)))
+        self.settings["review_capture_fps"] = fps
+        self.settings["review_capture_interval_ms"] = max(16, int(1000 / fps))
         write_json(SETTINGS_PATH, self.settings)
         self.status.set("Settings saved")
+
+    def latest_github_sha(self):
+        request = urllib.request.Request(GITHUB_API_LATEST, headers={"User-Agent": "CodeHub-Updater"})
+        with urllib.request.urlopen(request, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return str(payload.get("sha", "")).strip()
+
+    def check_for_updates(self, auto=False):
+        self.status.set("Checking GitHub for updates...")
+
+        def worker():
+            try:
+                latest_sha = self.latest_github_sha()
+                if not latest_sha:
+                    raise RuntimeError("GitHub did not return a commit SHA.")
+                current_sha = str(self.settings.get("last_update_sha", "") or BUILD_COMMIT)
+                has_update = latest_sha != current_sha
+                self.root.after(0, lambda: self.finish_update_check(latest_sha, has_update, auto))
+            except Exception as exc:
+                if not auto:
+                    self.root.after(0, lambda: messagebox.showerror(APP_NAME, f"Update check failed:\n{exc}"))
+                self.root.after(0, lambda: self.status.set("Update check failed" if not auto else "Ready"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_update_check(self, latest_sha, has_update, auto):
+        short_sha = latest_sha[:7]
+        if not has_update:
+            self.status.set(f"Already up to date  ·  {short_sha}")
+            if not auto:
+                messagebox.showinfo(APP_NAME, f"CodeHub is already up to date.\nLatest: {short_sha}")
+            return
+        if auto:
+            should_update = True
+        else:
+            should_update = messagebox.askyesno(
+                APP_NAME,
+                f"Update found on GitHub: {short_sha}\n\nDownload the latest one-file CodeHub.exe now?",
+            )
+        if should_update:
+            self.download_and_apply_update(latest_sha)
+        else:
+            self.status.set(f"Update available  ·  {short_sha}")
+
+    def download_and_apply_update(self, latest_sha):
+        if not getattr(sys, "frozen", False):
+            messagebox.showinfo(APP_NAME, "Source mode detected. Use Run Local Updater to rebuild the exe.")
+            return
+        exe_path = Path(sys.executable).resolve()
+        tmp_exe = Path(tempfile.gettempdir()) / "CodeHub_update.exe"
+        bat_path = Path(tempfile.gettempdir()) / "CodeHub_apply_update.bat"
+        self.settings["last_update_sha"] = latest_sha
+        write_json(SETTINGS_PATH, self.settings)
+        script = f"""@echo off
+color 0A
+title CodeHub Update
+echo [CodeHub] downloading latest package from GitHub...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{GITHUB_EXE_URL}' -OutFile '{tmp_exe}'"
+if errorlevel 1 (
+    echo [CodeHub] download failed.
+    pause
+    exit /b 1
+)
+echo [CodeHub] waiting for app to close...
+timeout /t 2 /nobreak >nul
+echo [CodeHub] replacing executable...
+copy /y "{tmp_exe}" "{exe_path}" >nul
+echo [CodeHub] restarting CodeHub...
+start "" "{exe_path}"
+del "{tmp_exe}" >nul 2>nul
+del "%~f0" >nul 2>nul
+"""
+        bat_path.write_text(script, encoding="utf-8")
+        subprocess.Popen(["cmd", "/c", "start", "", str(bat_path)], shell=False)
+        self.close()
+
+    def run_local_updater(self):
+        candidates = [
+            APP_ROOT / "AppUpdater.bat",
+            Path(r"F:\Auto Hotkey\Python\CodeHub\AppUpdater.bat"),
+        ]
+        updater = next((path for path in candidates if path.exists()), None)
+        if not updater:
+            messagebox.showerror(APP_NAME, "Could not find AppUpdater.bat.")
+            return
+        subprocess.Popen(["cmd", "/c", "start", "", str(updater)], cwd=str(updater.parent), shell=False)
+        self.status.set("Local updater launched")
 
     def save_ui_settings(self):
         try:
