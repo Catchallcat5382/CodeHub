@@ -1,29 +1,19 @@
-﻿# Python
-__pycache__/
-*.py[cod]
-*.pyo
-.venv/
-venv/
-
-# CodeHub user/runtime data
+# CodeHub local junk
 data/
 exports/
-release/
-*.zip
-
-# PyInstaller/build output
 build/
-dist/
-*.spec
-_internal/
+build_out/
 .codehub_runtime/
-.codehub_tools/
-CodeHub.exe
-CodeHubApp.exe
+__pycache__/
+*.pyc
+*.spec
 
-# Local/editor noise
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
+# Local updater scripts
+github_update.bat
+downgrade.bat
+build.bat
+build.ps1
+
+# Secrets / local env
+.env
 *.log
