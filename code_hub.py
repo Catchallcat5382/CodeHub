@@ -3013,7 +3013,7 @@ root.mainloop()
             self.download_and_apply_update(latest_sha)
         else:
             self.status.set(f"Update available  ·  {short_sha}")
-
+            
     def download_and_apply_update(self, latest_sha):
         if not getattr(sys, "frozen", False):
             messagebox.showinfo(APP_NAME, "Source mode detected. Use Run Local Updater to rebuild the exe.")
@@ -3057,12 +3057,14 @@ root.mainloop()
     )
 
     echo [CodeHub] restarting CodeHub...
-    start "" "{exe_path}"
+    start "" /D "{exe_path.parent}" "{exe_path}"
 
+    echo [CodeHub] cleaning temp files...
     del "{tmp_exe}" >nul 2>nul
-    del "%~f0" >nul 2>nul
 
-    exit /b 0
+    echo [CodeHub] updated and closing...
+    timeout /t 1 /nobreak >nul
+    exit
     """
 
         bat_path.write_text(script, encoding="utf-8")
