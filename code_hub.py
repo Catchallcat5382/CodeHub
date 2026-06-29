@@ -169,7 +169,7 @@ def startup_console():
         "[UI] waiting for every package before showing CodeHub",
         "[SAFE] paths, names, and IPs are redacted in loader output",
         "[READY] package load complete; opening interface",
-        "[NOTE] Do NOT close this console window while CodeHub is running. It will close CodeHub if you do.",
+        "[NOTE] Do NOT close this console window while CodeHub is running. It will close CodeHub if you do",
     ]
     total = len(lines)
     for i, line in enumerate(lines, 1):
@@ -3013,7 +3013,7 @@ root.mainloop()
             self.download_and_apply_update(latest_sha)
         else:
             self.status.set(f"Update available  ·  {short_sha}")
-            
+
     def download_and_apply_update(self, latest_sha):
         if not getattr(sys, "frozen", False):
             messagebox.showinfo(APP_NAME, "Source mode detected. Use Run Local Updater to rebuild the exe.")
