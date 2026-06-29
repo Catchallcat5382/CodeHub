@@ -1,0 +1,29 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# CodeHub user/runtime data
+data/
+exports/
+release/
+*.zip
+
+# PyInstaller/build output
+build/
+dist/
+*.spec
+_internal/
+.codehub_runtime/
+.codehub_tools/
+CodeHub.exe
+CodeHubApp.exe
+
+# Local/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
