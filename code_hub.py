@@ -169,7 +169,7 @@ def startup_console():
         "[UI] waiting for every package before showing CodeHub",
         "[SAFE] paths, names, and IPs are redacted in loader output",
         "[READY] package load complete; opening interface",
-        "[NOTE] Do NOT close this console window while CodeHub is running. It will close CodeHub if you do",
+        "[NOTE] Do NOT close this console window while CodeHub is running. It will close CodeHub if you do.",
     ]
     total = len(lines)
     for i, line in enumerate(lines, 1):
@@ -3020,17 +3020,19 @@ root.mainloop()
             return
 
         exe_path = Path(sys.executable).resolve()
-        tmp_exe = Path(tempfile.gettempdir()) / "CodeHub_update.exe"
-        bat_path = Path(tempfile.gettempdir()) / "CodeHub_apply_update.bat"
+        app_dir = exe_path.parent
+        tmp_exe = app_dir / "CodeHub_update_tmp.exe"
+        cmd_path = app_dir / "CodeHub_apply_update.cmd"
         current_pid = os.getpid()
 
         self.settings["last_update_sha"] = latest_sha
         write_json(SETTINGS_PATH, self.settings)
 
         script = f"""@echo off
-    setlocal
+    setlocal EnableExtensions
     color 0A
     title CodeHub Update
+    cd /d "{app_dir}"
 
     echo [CodeHub] downloading latest package from GitHub...
     powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{GITHUB_EXE_URL}' -OutFile '{tmp_exe}'"
@@ -3040,7 +3042,7 @@ root.mainloop()
         exit /b 1
     )
 
-    echo [CodeHub] waiting for old app to close...
+    echo [CodeHub] waiting for app to close...
     :WAIT_APP
     tasklist /FI "PID eq {current_pid}" | find "{current_pid}" >nul
     if not errorlevel 1 (
@@ -3057,21 +3059,21 @@ root.mainloop()
     )
 
     echo [CodeHub] restarting CodeHub...
-    start "" /D "{exe_path.parent}" "{exe_path}"
+    start "" /D "{app_dir}" "{exe_path}"
 
-    echo [CodeHub] cleaning temp files...
-    del "{tmp_exe}" >nul 2>nul
+    echo [CodeHub] cleaning temp file...
+    del /f /q "{tmp_exe}" >nul 2>&1
 
     echo [CodeHub] updated and closing...
     timeout /t 1 /nobreak >nul
     exit
     """
 
-        bat_path.write_text(script, encoding="utf-8")
+        cmd_path.write_text(script, encoding="utf-8")
 
         subprocess.Popen(
-            ["cmd.exe", "/c", str(bat_path)],
-            cwd=str(exe_path.parent),
+            ["cmd.exe", "/c", "call", str(cmd_path)],
+            cwd=str(app_dir),
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
         )
 
