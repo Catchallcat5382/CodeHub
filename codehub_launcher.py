@@ -209,29 +209,25 @@ def launch_gui():
 
     line("[BOOT] launching CodeHub GUI...")
 
+    flags = 0
     if os.name == "nt":
-        DETACHED_PROCESS = 0x00000008
-        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        flags = (
+            subprocess.DETACHED_PROCESS |
+            subprocess.CREATE_NEW_PROCESS_GROUP |
+            subprocess.CREATE_NEW_CONSOLE
+        )
 
-        subprocess.Popen(
-            [str(GUI_EXE)],
-            cwd=str(ROOT),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-        )
-    else:
-        subprocess.Popen(
-            [str(GUI_EXE)],
-            cwd=str(ROOT),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
+    subprocess.Popen(
+        [str(GUI_EXE)],
+        cwd=str(ROOT),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=flags,
+        close_fds=True
+    )
 
     return True
-
 
 def main():
     banner()
@@ -261,9 +257,8 @@ def main():
         write_state(state)
 
         if launch_gui():
-            line("[BOOT] GUI launched safely.")
-            line("[BOOT] closing bootstrap console.")
-            time.sleep(0.6)
+            line("[BOOT] closing bootstrap.")
+            time.sleep(0.3)
             os._exit(0)
 
     line("[BOOT] bootstrap failed or cancelled.")

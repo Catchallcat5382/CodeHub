@@ -59,6 +59,23 @@ GITHUB_REPO = "Catchallcat5382/CodeHub"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
 GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/raw/main/CodeHub.exe"
 BUILD_COMMIT = "local-build"
+BUILD_NUMBER = 1
+
+
+def build_version(build_number=None):
+    try:
+        n = int(build_number or BUILD_NUMBER)
+    except Exception:
+        n = 1
+
+    n = max(1, n)
+    major = ((n - 1) // 10) + 1
+    minor = (n - 1) % 10
+
+    if minor == 0:
+        return f"V{major}"
+    return f"V{major}.{minor}"
+
 if getattr(sys, "frozen", False):
     APP_ROOT = Path(sys.executable).resolve().parent
     if APP_ROOT.name == ".codehub_runtime":
@@ -159,6 +176,7 @@ def startup_console():
         os.system(f"title {APP_NAME} Loader")
     except Exception:
         pass
+
     lines = [
         "[BOOT] CodeHub package loader",
         "[PY] unpacking embedded Python runtime and Tk UI packages",
@@ -169,8 +187,8 @@ def startup_console():
         "[UI] waiting for every package before showing CodeHub",
         "[SAFE] paths, names, and IPs are redacted in loader output",
         "[READY] package load complete; opening interface",
-        "[NOTE] Do NOT close this console window while CodeHub is running. It will close CodeHub if you do",
     ]
+
     total = len(lines)
     for i, line in enumerate(lines, 1):
         print(line, flush=True)
@@ -179,6 +197,10 @@ def startup_console():
         bar = "#" * done + "-" * (width - done)
         print(f"[LOAD] [{bar}] {int(i * 100 / total):3d}% packages ready", flush=True)
         time.sleep(0.025)
+
+    print("[NOTE] Do NOT close this console while using CodeHub. It will close both applications.", flush=True)
+    print("[VERSION] " + build_version(), flush=True)
+    time.sleep(0.5)
 
 
 def read_json(path, fallback):
@@ -939,7 +961,7 @@ class CodeHubApp:
         self.root.focus_force()
         self.root.update_idletasks()
         self.force_taskbar_icon()
-        self.root.after(150, hide_console_if_present)
+        self.root.after(500, hide_console_if_present)
 
     def center_geometry(self, width, height):
         screen_w = self.root.winfo_screenwidth()
@@ -1599,8 +1621,9 @@ class CodeHubApp:
         rr.pack(fill=X)
         ttk.Checkbutton(rr, text="Capture review screenshots while recording", variable=self.record_screenshots, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
         ttk.Label(rr, text="FPS:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
-        ttk.Combobox(rr, textvariable=self.review_fps, values=["10", "15", "24", "30", "60"],
-                     state="readonly", width=6).pack(side=LEFT, padx=(0, 8))
+        ttk.Combobox(rr, textvariable=self.review_fps,
+                    values=["30", "60", "90", "120", "144", "165", "240"],
+                    state="readonly", width=6).pack(side=LEFT, padx=(0, 8))
         ttk.Button(rr, text="Save Replay FPS", style="Ghost.TButton", command=self.save_permissions).pack(side=LEFT)
 
         self._section(pad, "Permissions")
@@ -1658,7 +1681,7 @@ class CodeHubApp:
         self.recorder.start(self.mode.get())
         self.capture_review_snapshot("start")
         fps = self.builder_number(self.review_fps.get(), int(self.settings.get("review_capture_fps", 60)))
-        self.root.after(max(16, int(1000 / max(1, fps))), self.capture_review_tick)
+        self.root.after(max(4, int(1000 / max(1, min(240, fps)))), self.capture_review_tick)
 
     def stop_recording(self):
         if self.macro_locked or not self.is_recording:
@@ -1735,7 +1758,7 @@ class CodeHubApp:
             return
         self.capture_review_snapshot("tick")
         fps = self.builder_number(self.review_fps.get(), int(self.settings.get("review_capture_fps", 60)))
-        interval = max(16, int(1000 / max(1, fps)))
+        interval = max(4, int(1000 / max(1, min(240, fps))))
         self.root.after(interval, self.capture_review_tick)
 
     def refresh_recordings(self):
@@ -2965,9 +2988,9 @@ root.mainloop()
         self.settings["ai_can_run"] = self.ai_can_run.get()
         self.settings["record_screenshots"] = self.record_screenshots.get()
         self.settings["auto_update"] = self.auto_update.get()
-        fps = max(1, min(60, self.builder_number(self.review_fps.get(), 60)))
+        fps = max(1, min(240, self.builder_number(self.review_fps.get(), 60)))
         self.settings["review_capture_fps"] = fps
-        self.settings["review_capture_interval_ms"] = max(16, int(1000 / fps))
+        self.settings["review_capture_interval_ms"] = max(4, int(1000 / fps))
         write_json(SETTINGS_PATH, self.settings)
         self.status.set("Settings saved")
 
@@ -3059,7 +3082,7 @@ root.mainloop()
     )
 
     echo [CodeHub] restarting CodeHub...
-    start "" /D "{app_dir}" "{exe_path}"
+    start "" /D "{app_dir}" "{exe_path.name}"
 
     echo [CodeHub] cleaning temp file...
     del /f /q "{tmp_exe}" >nul 2>&1
