@@ -30,11 +30,17 @@ if getattr(sys, "frozen", False):
     APP_ROOT = Path(sys.executable).resolve().parent
     if APP_ROOT.name == ".codehub_runtime":
         APP_ROOT = APP_ROOT.parent
+    USER_ROOT = Path(os.environ.get("LOCALAPPDATA", str(APP_ROOT))) / APP_NAME
 else:
     APP_ROOT = Path(__file__).resolve().parent
-ASSET_DIR = APP_ROOT / "assets"
-DATA_DIR = APP_ROOT / "data"
-EXPORT_DIR = APP_ROOT / "exports"
+    USER_ROOT = APP_ROOT
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    BUNDLE_ROOT = Path(sys._MEIPASS)
+else:
+    BUNDLE_ROOT = APP_ROOT
+ASSET_DIR = BUNDLE_ROOT / "assets"
+DATA_DIR = USER_ROOT / "data"
+EXPORT_DIR = USER_ROOT / "exports"
 SETTINGS_PATH = DATA_DIR / "settings.json"
 RECORDINGS_PATH = DATA_DIR / "recordings.json"
 KNOWLEDGE_PATH = DATA_DIR / "knowledge.json"
@@ -680,6 +686,10 @@ class CodeHubApp:
         self.root.minsize(820, 520)
         self.root.resizable(True, True)
         self.root.configure(bg="#0b1118")
+        self.root.overrideredirect(True)
+        self._drag_offset = (0, 0)
+        self._restore_geometry = None
+        self._window_is_maximized = False
         self.logo_path = ASSET_DIR / "CodeHub Logo transparent.png"
         self.icon_path = ASSET_DIR / "CodeHub Logo.ico"
         if not self.logo_path.exists():
@@ -739,6 +749,8 @@ class CodeHubApp:
         self.build()
         self.start_hotkeys()
         self.start_auto_refresh()
+        self.root.bind("<Map>", self.restore_borderless_after_minimize)
+        self.root.after(250, self.force_taskbar_icon)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     def configure_style(self):
@@ -776,13 +788,24 @@ class CodeHubApp:
         self.main_container = outer
         header = ttk.Frame(outer, style="Panel.TFrame", padding=(10, 7))
         header.pack(fill=X, pady=(0, 8))
+        self.make_draggable(header)
         if self.logo_small:
-            ttk.Label(header, image=self.logo_small, style="Panel.TLabel").pack(side=LEFT, padx=(0, 8))
+            logo = ttk.Label(header, image=self.logo_small, style="Panel.TLabel")
+            logo.pack(side=LEFT, padx=(0, 8))
+            self.make_draggable(logo)
         title_box = ttk.Frame(header)
         title_box.pack(side=LEFT, fill=X, expand=True)
-        ttk.Label(title_box, text="CodeHub", font=("Segoe UI", 17, "bold"), style="Panel.TLabel").pack(anchor="w")
-        ttk.Label(title_box, text="Recorder, scripts, tools, JSON saves.", style="PanelMuted.TLabel").pack(anchor="w")
+        self.make_draggable(title_box)
+        title_label = ttk.Label(title_box, text="CodeHub", font=("Segoe UI", 17, "bold"), style="Panel.TLabel")
+        title_label.pack(anchor="w")
+        self.make_draggable(title_label)
+        subtitle = ttk.Label(title_box, text="Recorder, scripts, tools, JSON saves.", style="PanelMuted.TLabel")
+        subtitle.pack(anchor="w")
+        self.make_draggable(subtitle)
         ttk.Label(header, textvariable=self.status, foreground="#8fd9ff", background="#101a27").pack(side=LEFT, padx=12)
+        ttk.Button(header, text="X", style="Ghost.TButton", command=self.close).pack(side=RIGHT, padx=(5, 0))
+        ttk.Button(header, text="[]", style="Ghost.TButton", command=self.toggle_maximize_window).pack(side=RIGHT, padx=(5, 0))
+        ttk.Button(header, text="_", style="Ghost.TButton", command=self.minimize_window).pack(side=RIGHT, padx=(5, 0))
         ttk.Button(header, text="Full Screen", style="Ghost.TButton", command=self.toggle_fullscreen).pack(side=RIGHT)
 
         self.tabs = ttk.Notebook(outer)
@@ -794,7 +817,64 @@ class CodeHubApp:
         self.tabs.add(self.settings_tab(), text="Settings")
 
     def minimize_window(self):
+        self.root.overrideredirect(False)
         self.root.iconify()
+
+    def restore_borderless_after_minimize(self, _event=None):
+        if self.root.state() == "normal":
+            self.root.after(20, self.restore_window_style)
+
+    def restore_window_style(self):
+        try:
+            self.root.overrideredirect(True)
+            self.force_taskbar_icon()
+        except Exception:
+            pass
+
+    def force_taskbar_icon(self):
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            self.root.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+            gwl_exstyle = -20
+            ws_ex_appwindow = 0x00040000
+            ws_ex_toolwindow = 0x00000080
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, gwl_exstyle)
+            style = (style | ws_ex_appwindow) & ~ws_ex_toolwindow
+            ctypes.windll.user32.SetWindowLongW(hwnd, gwl_exstyle, style)
+        except Exception:
+            pass
+
+    def make_draggable(self, widget):
+        widget.bind("<ButtonPress-1>", self.begin_window_drag)
+        widget.bind("<B1-Motion>", self.drag_window)
+        widget.bind("<Double-Button-1>", lambda _event: self.toggle_maximize_window())
+
+    def begin_window_drag(self, event):
+        if self._window_is_maximized:
+            return
+        self._drag_offset = (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
+
+    def drag_window(self, event):
+        if self._window_is_maximized:
+            return
+        x = event.x_root - self._drag_offset[0]
+        y = event.y_root - self._drag_offset[1]
+        self.root.geometry(f"+{x}+{y}")
+
+    def toggle_maximize_window(self):
+        if self._window_is_maximized:
+            if self._restore_geometry:
+                self.root.geometry(self._restore_geometry)
+            self._window_is_maximized = False
+            return
+        self._restore_geometry = self.root.geometry()
+        width = self.root.winfo_screenwidth()
+        height = self.root.winfo_screenheight()
+        self.root.geometry(f"{width}x{height}+0+0")
+        self._window_is_maximized = True
 
     def recorder_tab(self):
         tab = ttk.Frame(self.tabs, padding=12)
@@ -1043,6 +1123,9 @@ class CodeHubApp:
 
     def start_hotkeys(self):
         def on_press(key):
+            if key == Key.f9:
+                self.root.after(0, self.close)
+                return
             if self.macro_locked:
                 return
             if key == Key.f1:
