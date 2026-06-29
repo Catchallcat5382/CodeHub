@@ -1,12 +1,8 @@
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ShortcutPath = Join-Path $Root "CodeHub.lnk"
-$ExePath = Join-Path $Root "CodeHub.exe"
-$IconPath = Join-Path $Root "assets\CodeHub Logo.ico"
+$Desktop = [Environment]::GetFolderPath("Desktop")
+$Target = Join-Path $PSScriptRoot "Launch CodeHub.bat"
+$Shortcut = Join-Path $Desktop "CodeHub.lnk"
 $Shell = New-Object -ComObject WScript.Shell
-$Shortcut = $Shell.CreateShortcut($ShortcutPath)
-$Shortcut.TargetPath = $ExePath
-$Shortcut.WorkingDirectory = $Root
-$Shortcut.IconLocation = $IconPath
-$Shortcut.Description = "Launch CodeHub"
-$Shortcut.Save()
-Write-Host "Created $ShortcutPath"
+$Link = $Shell.CreateShortcut($Shortcut)
+$Link.TargetPath = $Target
+$Link.WorkingDirectory = $PSScriptRoot
+$Link.Save()

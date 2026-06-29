@@ -1,19 +1,34 @@
-# CodeHub local junk
+# Python
+__pycache__/
+*.pyc
+*.py[cod]
+
+# Build / runtime junk
 data/
 exports/
 build/
 build_out/
 .codehub_runtime/
-__pycache__/
-*.pyc
+_internal/
+CodeHubApp.spec
 *.spec
 
-# Local updater scripts
-github_update.bat
-downgrade.bat
-build.bat
-build.ps1
-
-# Secrets / local env
+# Logs / secrets
+publish_log.txt
 .env
 *.log
+
+# Local-only helper scripts
+Github.bat
+github_update.bat
+downgrade.bat
+GitHub Update.bat
+GitHub Downgrade.bat
+Publish to GitHub.bat
+
+# README source file
+README.txt
+
+# Windows junk
+Thumbs.db
+Desktop.ini
