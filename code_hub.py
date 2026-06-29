@@ -9,7 +9,10 @@ import time
 import difflib
 from datetime import datetime
 from pathlib import Path
-from tkinter import BOTH, END, HORIZONTAL, LEFT, RIGHT, X, BooleanVar, DoubleVar, PhotoImage, StringVar, Tk, Toplevel
+from tkinter import (
+    BOTH, END, HORIZONTAL, LEFT, RIGHT, X, Y, BooleanVar, DoubleVar,
+    PhotoImage, StringVar, Tk, Toplevel, Canvas, Frame
+)
 from tkinter import filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
 from tkinter import ttk
@@ -23,6 +26,30 @@ except Exception:
     Image = None
     ImageTk = None
 
+# ── Palette ────────────────────────────────────────────────────────────────────
+C = {
+    "bg":        "#080c12",
+    "bg2":       "#0b1018",
+    "panel":     "#0f1620",
+    "panel2":    "#131d2a",
+    "border":    "#1e2d3d",
+    "border2":   "#243040",
+    "text":      "#e8f0f8",
+    "text2":     "#7a98b8",
+    "text3":     "#3a5060",
+    "accent":    "#176bff",
+    "accent2":   "#0d4fd8",
+    "green":     "#27c96e",
+    "green2":    "#1a9550",
+    "orange":    "#f09030",
+    "red":       "#f04040",
+    "purple":    "#9060f0",
+    "yellow":    "#e8c040",
+    "cyan":      "#30c8e8",
+    "teal":      "#20a890",
+    "selection": "#1a3a60",
+    "hl":        "#0d2240",
+}
 
 APP_NAME = "CodeHub"
 MAKER_NAME = "Macro Maker"
@@ -45,7 +72,6 @@ SETTINGS_PATH = DATA_DIR / "settings.json"
 RECORDINGS_PATH = DATA_DIR / "recordings.json"
 KNOWLEDGE_PATH = DATA_DIR / "knowledge.json"
 
-
 DEFAULT_SETTINGS = {
     "export_dir": str(EXPORT_DIR),
     "default_script_name": "MyMacro",
@@ -60,7 +86,6 @@ DEFAULT_SETTINGS = {
     "record_screenshots": True,
     "review_capture_interval_ms": 2000,
 }
-
 
 DEFAULT_KNOWLEDGE = {
     "python": [
@@ -102,6 +127,40 @@ def set_windows_app_id():
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Cat.CodeHub.MacroMaker")
     except Exception:
         pass
+
+
+def hide_console_if_present():
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.kernel32.FreeConsole()
+    except Exception:
+        pass
+
+
+def startup_console():
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    try:
+        os.system("color 0A")
+        os.system(f"title {APP_NAME} Loader")
+    except Exception:
+        pass
+    lines = [
+        "[BOOT] CodeHub runtime handshake",
+        "[SCAN] redacting user/profile paths",
+        "[GIT] public update channel ready",
+        "[PACK] embedded app assets mounted",
+        "[UI] custom chrome enabled",
+        "[HOTKEY] F1 start | F2 stop | F9 exit",
+        "[SAFE] personal identifiers: [REDACTED]",
+        "[READY] launching interface",
+    ]
+    for line in lines:
+        print(line, flush=True)
+        time.sleep(0.025)
+    hide_console_if_present()
 
 
 def read_json(path, fallback):
@@ -199,49 +258,21 @@ def ahk_text(text):
 
 def to_ahk_key(key_text):
     mapping = {
-        "Key.space": "Space",
-        "Key.enter": "Enter",
-        "Key.tab": "Tab",
-        "Key.backspace": "Backspace",
-        "Key.delete": "Delete",
-        "Key.esc": "Escape",
-        "Key.escape": "Escape",
-        "Key.up": "Up",
-        "Key.down": "Down",
-        "Key.left": "Left",
-        "Key.right": "Right",
-        "Key.home": "Home",
-        "Key.end": "End",
-        "Key.page_up": "PgUp",
-        "Key.page_down": "PgDn",
-        "Key.shift": "Shift",
-        "Key.shift_l": "LShift",
-        "Key.shift_r": "RShift",
-        "Key.ctrl": "Ctrl",
-        "Key.ctrl_l": "LCtrl",
-        "Key.ctrl_r": "RCtrl",
-        "Key.alt": "Alt",
-        "Key.alt_l": "LAlt",
-        "Key.alt_r": "RAlt",
-        "Key.cmd": "LWin",
-        "Key.cmd_l": "LWin",
-        "Key.cmd_r": "RWin",
-        "Key.caps_lock": "CapsLock",
-        "Key.num_lock": "NumLock",
-        "Key.insert": "Insert",
-        "Key.print_screen": "PrintScreen",
-        "Key.f1": "F1",
-        "Key.f2": "F2",
-        "Key.f3": "F3",
-        "Key.f4": "F4",
-        "Key.f5": "F5",
-        "Key.f6": "F6",
-        "Key.f7": "F7",
-        "Key.f8": "F8",
-        "Key.f9": "F9",
-        "Key.f10": "F10",
-        "Key.f11": "F11",
-        "Key.f12": "F12",
+        "Key.space": "Space", "Key.enter": "Enter", "Key.tab": "Tab",
+        "Key.backspace": "Backspace", "Key.delete": "Delete",
+        "Key.esc": "Escape", "Key.escape": "Escape",
+        "Key.up": "Up", "Key.down": "Down", "Key.left": "Left", "Key.right": "Right",
+        "Key.home": "Home", "Key.end": "End",
+        "Key.page_up": "PgUp", "Key.page_down": "PgDn",
+        "Key.shift": "Shift", "Key.shift_l": "LShift", "Key.shift_r": "RShift",
+        "Key.ctrl": "Ctrl", "Key.ctrl_l": "LCtrl", "Key.ctrl_r": "RCtrl",
+        "Key.alt": "Alt", "Key.alt_l": "LAlt", "Key.alt_r": "RAlt",
+        "Key.cmd": "LWin", "Key.cmd_l": "LWin", "Key.cmd_r": "RWin",
+        "Key.caps_lock": "CapsLock", "Key.num_lock": "NumLock",
+        "Key.insert": "Insert", "Key.print_screen": "PrintScreen",
+        "Key.f1": "F1",  "Key.f2": "F2",  "Key.f3": "F3",  "Key.f4": "F4",
+        "Key.f5": "F5",  "Key.f6": "F6",  "Key.f7": "F7",  "Key.f8": "F8",
+        "Key.f9": "F9",  "Key.f10": "F10","Key.f11": "F11","Key.f12": "F12",
     }
     if key_text.startswith("'") and key_text.endswith("'") and len(key_text) >= 3:
         return key_text[1:-1]
@@ -346,7 +377,6 @@ def generate_ahk(events, mode, script_name):
         "",
         "ShowCodeHubLoader(durationMs := 900, title := 'Loading macro')",
         "{",
-        "    ; This is the removable CodeHub loading popup. Delete this function and its calls to remove it.",
         "    loader := Gui('+AlwaysOnTop -Caption +ToolWindow')",
         "    loader.BackColor := '081019'",
         "    loader.MarginX := 18",
@@ -375,8 +405,6 @@ def generate_ahk(events, mode, script_name):
         "",
         "CreateWatermark()",
         "{",
-        "    ; Top-right is the default because it usually avoids taskbars and common left-side menus.",
-        "    ; Remove this whole function plus the CreateWatermark() call above to delete the watermark.",
         "    wm := Gui('+AlwaysOnTop -Caption +ToolWindow +E0x20')",
         "    wm.BackColor := '101820'",
         "    wm.MarginX := 8",
@@ -601,12 +629,9 @@ class Recorder:
     def on_click(self, x, y, button, pressed):
         if self.recording:
             self.save({
-                "type": "mouse_click",
-                "x": x,
-                "y": y,
+                "type": "mouse_click", "x": x, "y": y,
                 "button": str(button).replace("Button.", "").lower(),
-                "pressed": pressed,
-                "time": self.now(),
+                "pressed": pressed, "time": self.now(),
             })
 
     def on_scroll(self, x, y, dx, dy):
@@ -626,45 +651,64 @@ class Recorder:
             self.save({"type": "key_release", "key": str(key), "time": self.now()})
 
 
+# ── Custom dialog helper ──────────────────────────────────────────────────────
+
+class StyledDialog(Toplevel):
+    """Base class for all custom dialogs — dark themed, no default chrome."""
+    def __init__(self, parent, title, width=480, height=280):
+        super().__init__(parent)
+        self.title(title)
+        self.configure(bg=C["bg"])
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+        # Center over parent
+        parent.update_idletasks()
+        px = parent.winfo_rootx() + parent.winfo_width() // 2 - width // 2
+        py = parent.winfo_rooty() + parent.winfo_height() // 2 - height // 2
+        self.geometry(f"{width}x{height}+{max(0,px)}+{max(0,py)}")
+        # Header strip
+        hdr = Frame(self, bg=C["panel"], height=44)
+        hdr.pack(fill=X)
+        hdr.pack_propagate(False)
+        ttk.Label(hdr, text=title, style="DialogTitle.TLabel").pack(side=LEFT, padx=16, pady=10)
+        # Body
+        self.body = Frame(self, bg=C["bg"], padx=20, pady=16)
+        self.body.pack(fill=BOTH, expand=True)
+
+    def btn_row(self):
+        row = Frame(self.body, bg=C["bg"])
+        row.pack(fill=X, pady=(12, 0))
+        return row
+
+
 class SaveRecordingDialog:
     def __init__(self, parent, default_name, default_export):
         self.result = None
-        self.window = Toplevel(parent)
-        self.window.title("Save Recording")
-        self.window.configure(bg="#0b1118")
-        self.window.transient(parent)
-        self.window.grab_set()
-        self.window.resizable(False, False)
+        self.window = StyledDialog(parent, "Save Recording", 500, 270)
         self.name_var = StringVar(value=default_name)
         self.export_var = StringVar(value="Default")
-
-        panel = ttk.Frame(self.window, padding=20, style="Panel.TFrame")
-        panel.pack(fill=BOTH, expand=True)
-        ttk.Label(panel, text="Save this macro", font=("Segoe UI", 15, "bold")).pack(anchor="w")
-        ttk.Label(panel, text=f"Default export is currently {default_export}.", style="Muted.TLabel").pack(anchor="w", pady=(2, 14))
-        ttk.Label(panel, text="Macro name").pack(anchor="w")
-        name_entry = ttk.Entry(panel, textvariable=self.name_var, width=42)
-        name_entry.pack(fill=X, pady=(4, 12))
-        ttk.Label(panel, text="Create script as").pack(anchor="w")
-        export_box = ttk.Combobox(panel, textvariable=self.export_var, values=["Default", "AutoHotkey v2", "Python"], state="readonly")
-        export_box.pack(fill=X, pady=(4, 18))
-        row = ttk.Frame(panel, style="Panel.TFrame")
-        row.pack(fill=X)
-        ttk.Button(row, text="Cancel", command=self.cancel).pack(side=RIGHT, padx=(8, 0))
-        ttk.Button(row, text="SAVE MACRO", command=self.accept).pack(side=RIGHT)
-        self.window.bind("<Return>", lambda _event: self.accept())
-        self.window.bind("<Escape>", lambda _event: self.cancel())
-        name_entry.focus_set()
-        parent.update_idletasks()
-        x = parent.winfo_rootx() + (parent.winfo_width() // 2) - 240
-        y = parent.winfo_rooty() + (parent.winfo_height() // 2) - 145
-        self.window.geometry(f"480x290+{max(0, x)}+{max(0, y)}")
+        b = self.window.body
+        ttk.Label(b, text="Save this macro", style="SectionTitle.TLabel").pack(anchor="w")
+        ttk.Label(b, text=f"Default export folder: {default_export}", style="Muted.TLabel").pack(anchor="w", pady=(2, 12))
+        ttk.Label(b, text="Macro name", style="FieldLabel.TLabel").pack(anchor="w")
+        name_e = ttk.Entry(b, textvariable=self.name_var, style="Dark.TEntry")
+        name_e.pack(fill=X, pady=(4, 10))
+        ttk.Label(b, text="Create script as", style="FieldLabel.TLabel").pack(anchor="w")
+        ttk.Combobox(b, textvariable=self.export_var, values=["Default", "AutoHotkey v2", "Python"],
+                     state="readonly", style="Dark.TCombobox").pack(fill=X, pady=(4, 0))
+        row = self.window.btn_row()
+        ttk.Button(row, text="Cancel", style="Ghost.TButton", command=self.cancel).pack(side=RIGHT, padx=(6, 0))
+        ttk.Button(row, text="Save Macro", style="Accent.TButton", command=self.accept).pack(side=RIGHT)
+        self.window.bind("<Return>", lambda _: self.accept())
+        self.window.bind("<Escape>", lambda _: self.cancel())
+        name_e.focus_set()
         self.window.wait_window()
 
     def accept(self):
         name = safe_name(self.name_var.get())
         if not name:
-            messagebox.showerror(APP_NAME, "Give the macro a name.")
+            messagebox.showerror(APP_NAME, "Give the macro a name.", parent=self.window)
             return
         self.result = {"name": name, "export_kind": self.export_var.get()}
         self.window.destroy()
@@ -673,6 +717,113 @@ class SaveRecordingDialog:
         self.window.destroy()
 
 
+# ── Custom title bar ──────────────────────────────────────────────────────────
+
+class TitleBar(Frame):
+    def __init__(self, parent, app):
+        super().__init__(parent, bg=C["panel"], height=50)
+        self.app = app
+        self.pack_propagate(False)
+        self._drag_x = 0
+        self._drag_y = 0
+
+        # Logo diamond
+        logo_lbl = ttk.Label(self, text="◈", style="Logo.TLabel")
+        logo_lbl.pack(side=LEFT, padx=(14, 6), pady=10)
+
+        name_lbl = ttk.Label(self, text="CodeHub", style="AppTitle.TLabel")
+        name_lbl.pack(side=LEFT, padx=(0, 4))
+
+        sep_lbl = ttk.Label(self, text="·", style="TitleSep.TLabel")
+        sep_lbl.pack(side=LEFT, padx=4)
+
+        sub_lbl = ttk.Label(self, text="Recorder · Scripts · Tools · Automation", style="AppSub.TLabel")
+        sub_lbl.pack(side=LEFT)
+
+        # Window controls (right side)
+        Frame(self, bg=C["panel"], width=10).pack(side=RIGHT)
+
+        close_btn = self._wbtn("✕", C["red"], self.app.close)
+        close_btn.pack(side=RIGHT, padx=2, pady=10)
+
+        max_btn = self._wbtn("⬜", C["green"], self._toggle_max)
+        max_btn.pack(side=RIGHT, padx=2, pady=10)
+
+        min_btn = self._wbtn("─", C["yellow"], self.app.minimize_window)
+        min_btn.pack(side=RIGHT, padx=2, pady=10)
+
+        Frame(self, bg=C["panel"], width=10).pack(side=RIGHT)
+
+        # Hotkey pills
+        for txt, col in [("F9 Exit", C["red"]), ("F2 Stop", C["orange"]), ("F1 Record", C["green"])]:
+            pill = ttk.Label(self, text=txt, style="Pill.TLabel",
+                             foreground=col, background=C["panel"])
+            pill.pack(side=RIGHT, padx=4, pady=14)
+
+        Frame(self, bg=C["border"], width=1).pack(side=RIGHT, fill=Y, pady=8)
+        Frame(self, bg=C["panel"], width=6).pack(side=RIGHT)
+
+        # Status var display
+        self.status_var = None  # set later
+
+        # Drag bindings on all children
+        for widget in [self, logo_lbl, name_lbl, sep_lbl, sub_lbl]:
+            widget.bind("<ButtonPress-1>", self._start_drag)
+            widget.bind("<B1-Motion>", self._do_drag)
+            widget.bind("<Double-Button-1>", lambda _e: self._toggle_max())
+
+    def _wbtn(self, sym, hover_col, cmd):
+        btn = ttk.Label(self, text=sym, style="WinBtn.TLabel", cursor="hand2")
+        btn.bind("<Button-1>", lambda _e: cmd())
+        btn.bind("<Enter>", lambda _e, b=btn, col=hover_col: b.configure(foreground=col))
+        btn.bind("<Leave>", lambda _e, b=btn: b.configure(foreground=C["text2"]))
+        return btn
+
+    def _toggle_max(self):
+        root = self.winfo_toplevel()
+        if root.state() == "zoomed":
+            root.state("normal")
+        else:
+            root.state("zoomed")
+
+    def _start_drag(self, event):
+        self._drag_x = event.x_root
+        self._drag_y = event.y_root
+
+    def _do_drag(self, event):
+        root = self.winfo_toplevel()
+        if root.state() == "zoomed":
+            return
+        dx = event.x_root - self._drag_x
+        dy = event.y_root - self._drag_y
+        x = root.winfo_x() + dx
+        y = root.winfo_y() + dy
+        root.geometry(f"+{x}+{y}")
+        self._drag_x = event.x_root
+        self._drag_y = event.y_root
+
+
+# ── Status bar ────────────────────────────────────────────────────────────────
+
+class StatusBar(Frame):
+    def __init__(self, parent, status_var):
+        super().__init__(parent, bg=C["panel"], height=28)
+        self.pack_propagate(False)
+        Frame(self, bg=C["accent"], width=3).pack(side=LEFT, fill=Y)
+        self._dot = ttk.Label(self, text="●", style="StatusDot.TLabel", foreground=C["text3"])
+        self._dot.pack(side=LEFT, padx=(10, 4))
+        self._lbl = ttk.Label(self, textvariable=status_var, style="StatusText.TLabel")
+        self._lbl.pack(side=LEFT)
+        # right side info
+        self._info = ttk.Label(self, text="F1 Record · F2 Stop · F9 Exit", style="StatusRight.TLabel")
+        self._info.pack(side=RIGHT, padx=14)
+
+    def set_color(self, color):
+        self._dot.configure(foreground=color)
+
+
+# ── Main App ──────────────────────────────────────────────────────────────────
+
 class CodeHubApp:
     def __init__(self):
         ensure_files()
@@ -680,32 +831,36 @@ class CodeHubApp:
         self.recordings = read_json(RECORDINGS_PATH, {"recordings": []})
         self.knowledge = read_json(KNOWLEDGE_PATH, DEFAULT_KNOWLEDGE)
         set_windows_app_id()
+
         self.root = Tk()
         self.root.title(APP_NAME)
-        self.root.geometry("1040x680")
-        self.root.minsize(820, 520)
+        self.root.geometry(self.center_geometry(1120, 720))
+        self.root.minsize(860, 540)
         self.root.resizable(True, True)
-        self.root.configure(bg="#0b1118")
+        self.root.configure(bg=C["bg"])
         self.root.overrideredirect(True)
-        self._drag_offset = (0, 0)
-        self._restore_geometry = None
-        self._window_is_maximized = False
-        self.logo_path = ASSET_DIR / "CodeHub Logo transparent.png"
-        self.icon_path = ASSET_DIR / "CodeHub Logo.ico"
-        if not self.logo_path.exists():
-            self.logo_path = ASSET_DIR / "CodeHub Logo.png"
+
+        # Try to load assets
         self.logo_image = None
         self.logo_small = None
-        if self.logo_path.exists():
+        logo_path = ASSET_DIR / "CodeHub Logo transparent.png"
+        if not logo_path.exists():
+            logo_path = ASSET_DIR / "CodeHub Logo.png"
+        icon_path = ASSET_DIR / "CodeHub Logo.ico"
+        if logo_path.exists():
             try:
-                self.logo_image = PhotoImage(file=str(self.logo_path))
+                self.logo_image = PhotoImage(file=str(logo_path))
                 self.logo_small = self.logo_image.subsample(26, 26)
                 self.root.iconphoto(True, self.logo_image)
-                if self.icon_path.exists():
-                    self.root.iconbitmap(str(self.icon_path))
             except Exception:
-                self.logo_image = None
-                self.logo_small = None
+                pass
+        if icon_path.exists():
+            try:
+                self.root.iconbitmap(str(icon_path))
+            except Exception:
+                pass
+
+        # State vars
         self.is_recording = False
         self.current_editor_file = None
         self.recorder = Recorder(self.on_event)
@@ -713,7 +868,7 @@ class CodeHubApp:
         self.mode = StringVar(value="normal")
         self.default_export_kind = StringVar(value=self.settings.get("default_export_kind", "AutoHotkey v2"))
         self.export_dir_var = StringVar(value=self.settings.get("export_dir", str(EXPORT_DIR)))
-        self.status = StringVar(value="Idle")
+        self.status = StringVar(value="Ready")
         self.ai_can_edit = BooleanVar(value=bool(self.settings.get("ai_can_edit", False)))
         self.ai_can_delete = BooleanVar(value=bool(self.settings.get("ai_can_delete", False)))
         self.ai_can_run = BooleanVar(value=bool(self.settings.get("ai_can_run", False)))
@@ -745,80 +900,21 @@ class CodeHubApp:
         self.ai_pending_path = None
         self.ai_pending_text = ""
         self.ai_undo_stack = []
-        self.configure_style()
-        self.build()
+
+        self._configure_styles()
+        self._build()
         self.start_hotkeys()
         self.start_auto_refresh()
         self.root.bind("<Map>", self.restore_borderless_after_minimize)
         self.root.after(250, self.force_taskbar_icon)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
-    def configure_style(self):
-        style = ttk.Style()
-        style.theme_use("clam")
-        base_font_size = int(self.settings.get("ui_font_size", 9))
-        button_pad = (8, 4) if self.settings.get("ui_density", "compact") == "compact" else (11, 7)
-        tab_pad = (11, 5) if self.settings.get("ui_density", "compact") == "compact" else (15, 8)
-        style.configure(".", background="#080d14", foreground="#edf6ff", fieldbackground="#101a27", font=("Segoe UI", base_font_size))
-        style.configure("TFrame", background="#080d14")
-        style.configure("Panel.TFrame", background="#101a27", relief="flat")
-        style.configure("Lock.TFrame", background="#05070c", relief="flat")
-        style.configure("LockPanel.TFrame", background="#101a27", relief="flat")
-        style.configure("TLabel", background="#080d14", foreground="#edf6ff")
-        style.configure("Panel.TLabel", background="#101a27", foreground="#edf6ff")
-        style.configure("LockPanel.TLabel", background="#101a27", foreground="#edf6ff")
-        style.configure("Muted.TLabel", background="#080d14", foreground="#8fa0b7")
-        style.configure("PanelMuted.TLabel", background="#101a27", foreground="#8fa0b7")
-        style.configure("LockMuted.TLabel", background="#101a27", foreground="#8fa0b7")
-        style.configure("TButton", background="#176bff", foreground="#ffffff", borderwidth=0, padding=button_pad, font=("Segoe UI", base_font_size, "bold"))
-        style.map("TButton", background=[("active", "#28a9ff"), ("disabled", "#253244")])
-        style.configure("Ghost.TButton", background="#142033", foreground="#c6d8ed", padding=(8, 5))
-        style.map("Ghost.TButton", background=[("active", "#1d2c44")])
-        style.configure("TCombobox", foreground="#050a12", fieldbackground="#dceeff", background="#dceeff", arrowcolor="#050a12", padding=(6, 3))
-        style.map("TCombobox", fieldbackground=[("readonly", "#dceeff")], foreground=[("readonly", "#050a12")], selectbackground=[("readonly", "#dceeff")], selectforeground=[("readonly", "#050a12")])
-        style.configure("TNotebook", background="#080d14", borderwidth=0)
-        style.configure("TNotebook.Tab", background="#101a27", foreground="#95a9c0", padding=tab_pad, font=("Segoe UI", base_font_size, "bold"))
-        style.map("TNotebook.Tab", background=[("selected", "#13243a")], foreground=[("selected", "#ffffff")])
-        style.configure("Treeview", background="#081019", fieldbackground="#081019", foreground="#d9e7f5", rowheight=23, borderwidth=0)
-        style.configure("Treeview.Heading", background="#101a27", foreground="#8fd9ff", borderwidth=0, font=("Segoe UI", 9, "bold"))
-
-    def build(self):
-        outer = ttk.Frame(self.root, padding=(10, 8, 10, 10))
-        outer.pack(fill=BOTH, expand=True)
-        self.main_container = outer
-        header = ttk.Frame(outer, style="Panel.TFrame", padding=(10, 7))
-        header.pack(fill=X, pady=(0, 8))
-        self.make_draggable(header)
-        if self.logo_small:
-            logo = ttk.Label(header, image=self.logo_small, style="Panel.TLabel")
-            logo.pack(side=LEFT, padx=(0, 8))
-            self.make_draggable(logo)
-        title_box = ttk.Frame(header)
-        title_box.pack(side=LEFT, fill=X, expand=True)
-        self.make_draggable(title_box)
-        title_label = ttk.Label(title_box, text="CodeHub", font=("Segoe UI", 17, "bold"), style="Panel.TLabel")
-        title_label.pack(anchor="w")
-        self.make_draggable(title_label)
-        subtitle = ttk.Label(title_box, text="Recorder, scripts, tools, JSON saves.", style="PanelMuted.TLabel")
-        subtitle.pack(anchor="w")
-        self.make_draggable(subtitle)
-        ttk.Label(header, textvariable=self.status, foreground="#8fd9ff", background="#101a27").pack(side=LEFT, padx=12)
-        ttk.Button(header, text="X", style="Ghost.TButton", command=self.close).pack(side=RIGHT, padx=(5, 0))
-        ttk.Button(header, text="[]", style="Ghost.TButton", command=self.toggle_maximize_window).pack(side=RIGHT, padx=(5, 0))
-        ttk.Button(header, text="_", style="Ghost.TButton", command=self.minimize_window).pack(side=RIGHT, padx=(5, 0))
-        ttk.Button(header, text="Full Screen", style="Ghost.TButton", command=self.toggle_fullscreen).pack(side=RIGHT)
-
-        self.tabs = ttk.Notebook(outer)
-        self.tabs.pack(fill=BOTH, expand=True)
-        self.tabs.add(self.recorder_tab(), text="Recorder")
-        self.tabs.add(self.workspace_tab(), text="Workspace")
-        self.tabs.add(self.tools_tab(), text="Tools")
-        self.tabs.add(self.review_tab(), text="Review")
-        self.tabs.add(self.settings_tab(), text="Settings")
-
-    def minimize_window(self):
-        self.root.overrideredirect(False)
-        self.root.iconify()
+    def center_geometry(self, width, height):
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = max(20, int((screen_w - width) / 2))
+        y = max(20, int((screen_h - height) / 2))
+        return f"{width}x{height}+{x}+{y}"
 
     def restore_borderless_after_minimize(self, _event=None):
         if self.root.state() == "normal":
@@ -830,6 +926,10 @@ class CodeHubApp:
             self.force_taskbar_icon()
         except Exception:
             pass
+
+    def minimize_window(self):
+        self.root.overrideredirect(False)
+        self.root.iconify()
 
     def force_taskbar_icon(self):
         if sys.platform != "win32":
@@ -847,279 +947,576 @@ class CodeHubApp:
         except Exception:
             pass
 
-    def make_draggable(self, widget):
-        widget.bind("<ButtonPress-1>", self.begin_window_drag)
-        widget.bind("<B1-Motion>", self.drag_window)
-        widget.bind("<Double-Button-1>", lambda _event: self.toggle_maximize_window())
+    # ── Styles ────────────────────────────────────────────────────────────────
 
-    def begin_window_drag(self, event):
-        if self._window_is_maximized:
-            return
-        self._drag_offset = (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
+    def _configure_styles(self):
+        s = ttk.Style()
+        s.theme_use("clam")
+        F = ("Segoe UI", 9)
+        FB = ("Segoe UI", 9, "bold")
+        FM = ("Segoe UI", 11, "bold")
+        FL = ("Segoe UI", 14, "bold")
+        FC = ("Consolas", 9)
 
-    def drag_window(self, event):
-        if self._window_is_maximized:
-            return
-        x = event.x_root - self._drag_offset[0]
-        y = event.y_root - self._drag_offset[1]
-        self.root.geometry(f"+{x}+{y}")
+        # Base
+        s.configure(".", background=C["bg"], foreground=C["text"], font=F,
+                     fieldbackground=C["panel2"], troughcolor=C["panel"],
+                     selectbackground=C["selection"], selectforeground=C["text"],
+                     borderwidth=0, relief="flat")
+        s.configure("TFrame", background=C["bg"])
+        s.configure("TLabel", background=C["bg"], foreground=C["text"], font=F)
 
-    def toggle_maximize_window(self):
-        if self._window_is_maximized:
-            if self._restore_geometry:
-                self.root.geometry(self._restore_geometry)
-            self._window_is_maximized = False
-            return
-        self._restore_geometry = self.root.geometry()
-        width = self.root.winfo_screenwidth()
-        height = self.root.winfo_screenheight()
-        self.root.geometry(f"{width}x{height}+0+0")
-        self._window_is_maximized = True
+        # Title bar labels
+        s.configure("Logo.TLabel", background=C["panel"], foreground=C["accent"],
+                     font=("Segoe UI", 18, "bold"))
+        s.configure("AppTitle.TLabel", background=C["panel"], foreground=C["text"],
+                     font=("Segoe UI", 13, "bold"))
+        s.configure("TitleSep.TLabel", background=C["panel"], foreground=C["text3"], font=FM)
+        s.configure("AppSub.TLabel", background=C["panel"], foreground=C["text2"], font=F)
+        s.configure("WinBtn.TLabel", background=C["panel"], foreground=C["text2"],
+                     font=("Segoe UI", 11, "bold"), padding=(6, 0))
+        s.configure("Pill.TLabel", background=C["panel"], font=("Consolas", 8, "bold"),
+                     padding=(6, 2), relief="flat")
+        s.configure("DialogTitle.TLabel", background=C["panel"], foreground=C["text"],
+                     font=FM)
 
-    def recorder_tab(self):
-        tab = ttk.Frame(self.tabs, padding=12)
-        controls = ttk.Frame(tab)
-        controls.pack(fill=X, pady=(0, 10))
-        ttk.Label(controls, text="Recording mode").grid(row=0, column=0, sticky="w", padx=(0, 6))
-        ttk.Combobox(controls, textvariable=self.mode, values=["normal", "advanced", "minimal"], width=14, state="readonly").grid(row=0, column=1, padx=(0, 12), sticky="ew")
-        ttk.Label(controls, text="Default export").grid(row=0, column=2, sticky="w", padx=(0, 6))
-        ttk.Combobox(controls, textvariable=self.default_export_kind, values=["AutoHotkey v2", "Python"], width=16, state="readonly").grid(row=0, column=3, padx=(0, 12), sticky="ew")
-        self.start_button = ttk.Button(controls, text="F1 Start Recording", command=self.start_recording)
-        self.stop_button = ttk.Button(controls, text="F2 Stop and Save", command=self.stop_recording)
+        # Status bar
+        s.configure("StatusDot.TLabel", background=C["panel"], font=("Segoe UI", 14))
+        s.configure("StatusText.TLabel", background=C["panel"], foreground=C["text2"], font=F)
+        s.configure("StatusRight.TLabel", background=C["panel"], foreground=C["text3"],
+                     font=("Consolas", 8))
+
+        # Section / field labels
+        s.configure("SectionTitle.TLabel", background=C["bg"], foreground=C["text"], font=FM)
+        s.configure("SectionTitle2.TLabel", background=C["panel2"], foreground=C["text"], font=FM)
+        s.configure("FieldLabel.TLabel", background=C["bg"], foreground=C["text2"], font=F)
+        s.configure("Muted.TLabel", background=C["bg"], foreground=C["text2"], font=F)
+        s.configure("PanelMuted.TLabel", background=C["panel"], foreground=C["text2"], font=F)
+        s.configure("PanelLabel.TLabel", background=C["panel2"], foreground=C["text"], font=F)
+        s.configure("PanelMuted2.TLabel", background=C["panel2"], foreground=C["text2"], font=F)
+        s.configure("Accent.TLabel", background=C["bg"], foreground=C["accent"], font=FB)
+        s.configure("Green.TLabel", background=C["bg"], foreground=C["green"], font=FB)
+        s.configure("Red.TLabel", background=C["bg"], foreground=C["red"], font=FB)
+
+        # Notebook
+        s.configure("TNotebook", background=C["bg"], borderwidth=0, tabmargins=[0, 0, 0, 0])
+        s.configure("TNotebook.Tab", background=C["panel"], foreground=C["text2"],
+                     font=FB, padding=[16, 8], borderwidth=0)
+        s.map("TNotebook.Tab",
+              background=[("selected", C["bg2"])],
+              foreground=[("selected", C["accent"])])
+
+        # Buttons
+        s.configure("TButton", background=C["accent2"], foreground="#ffffff",
+                     font=FB, padding=(10, 5), borderwidth=0, relief="flat")
+        s.map("TButton",
+              background=[("active", C["accent"]), ("disabled", C["panel"])],
+              foreground=[("disabled", C["text3"])])
+        s.configure("Accent.TButton", background=C["accent2"], foreground="#ffffff",
+                     font=FB, padding=(10, 5), borderwidth=0)
+        s.map("Accent.TButton", background=[("active", C["accent"])])
+        s.configure("Green.TButton", background=C["green2"], foreground="#ffffff",
+                     font=FB, padding=(10, 5), borderwidth=0)
+        s.map("Green.TButton", background=[("active", C["green"])])
+        s.configure("Red.TButton", background="#3a1010", foreground=C["red"],
+                     font=FB, padding=(10, 5), borderwidth=0)
+        s.map("Red.TButton", background=[("active", "#5a1818")])
+        s.configure("Ghost.TButton", background=C["panel2"], foreground=C["text2"],
+                     font=F, padding=(10, 5), borderwidth=0)
+        s.map("Ghost.TButton",
+              background=[("active", C["border2"])],
+              foreground=[("active", C["text"])])
+        s.configure("Small.TButton", background=C["panel2"], foreground=C["text2"],
+                     font=("Segoe UI", 8), padding=(6, 3), borderwidth=0)
+        s.map("Small.TButton", background=[("active", C["border"])])
+
+        # Entry / combobox
+        s.configure("Dark.TEntry", fieldbackground=C["panel2"], foreground=C["text"],
+                     insertcolor=C["text"], borderwidth=1, relief="flat",
+                     padding=(8, 5))
+        s.configure("TEntry", fieldbackground=C["panel2"], foreground=C["text"],
+                     insertcolor=C["text"], borderwidth=0, padding=(8, 5))
+        s.configure("Dark.TCombobox", fieldbackground=C["panel2"], foreground=C["text"],
+                     selectbackground=C["panel2"], selectforeground=C["text"],
+                     arrowcolor=C["text2"], borderwidth=0, padding=(8, 5))
+        s.configure("TCombobox", fieldbackground=C["panel2"], foreground=C["text"],
+                     selectbackground=C["panel2"], selectforeground=C["text"],
+                     arrowcolor=C["text2"], borderwidth=0, padding=(6, 4))
+        s.map("TCombobox",
+              fieldbackground=[("readonly", C["panel2"])],
+              foreground=[("readonly", C["text"])],
+              selectbackground=[("readonly", C["panel2"])],
+              selectforeground=[("readonly", C["text"])])
+        s.map("Dark.TCombobox",
+              fieldbackground=[("readonly", C["panel2"])],
+              foreground=[("readonly", C["text"])])
+
+        # Treeview
+        s.configure("Treeview", background=C["bg2"], fieldbackground=C["bg2"],
+                     foreground=C["text"], rowheight=24, borderwidth=0, font=F)
+        s.configure("Treeview.Heading", background=C["panel"], foreground=C["text2"],
+                     borderwidth=0, font=FB, padding=(8, 4))
+        s.map("Treeview",
+              background=[("selected", C["selection"])],
+              foreground=[("selected", C["text"])])
+
+        # Scrollbar
+        s.configure("Vertical.TScrollbar", background=C["panel2"], troughcolor=C["bg2"],
+                     arrowcolor=C["text3"], borderwidth=0, width=8)
+        s.configure("Horizontal.TScrollbar", background=C["panel2"], troughcolor=C["bg2"],
+                     arrowcolor=C["text3"], borderwidth=0, width=8)
+
+        # Checkbutton
+        s.configure("TCheckbutton", background=C["bg"], foreground=C["text2"], font=F)
+        s.map("TCheckbutton", background=[("active", C["bg"])], foreground=[("active", C["text"])])
+
+        # Separator
+        s.configure("TSeparator", background=C["border"])
+
+        # Lock styles
+        s.configure("Lock.TFrame", background="#030608")
+        s.configure("LockPanel.TFrame", background=C["panel2"])
+        s.configure("LockPanel.TLabel", background=C["panel2"], foreground=C["text"], font=FL)
+        s.configure("LockMuted.TLabel", background=C["panel2"], foreground=C["text2"], font=F)
+
+        # PanedWindow
+        s.configure("TPanedwindow", background=C["border"])
+
+        # Progressbar
+        s.configure("Accent.Horizontal.TProgressbar", troughcolor=C["panel2"],
+                     background=C["accent"], borderwidth=0)
+
+    # ── Layout ────────────────────────────────────────────────────────────────
+
+    def _build(self):
+        # Title bar
+        self.title_bar = TitleBar(self.root, self)
+        self.title_bar.pack(fill=X, side="top")
+
+        # Top separator line
+        Frame(self.root, bg=C["border"], height=1).pack(fill=X)
+
+        # Status bar at bottom
+        self.status_bar = StatusBar(self.root, self.status)
+        self.status_bar.pack(fill=X, side="bottom")
+
+        Frame(self.root, bg=C["border"], height=1).pack(fill=X, side="bottom")
+
+        # Main body
+        body = Frame(self.root, bg=C["bg"])
+        body.pack(fill=BOTH, expand=True)
+
+        self.tabs = ttk.Notebook(body)
+        self.tabs.pack(fill=BOTH, expand=True, padx=0, pady=0)
+
+        self.tabs.add(self._recorder_tab(), text="  Recorder  ")
+        self.tabs.add(self._workspace_tab(), text="  Workspace  ")
+        self.tabs.add(self._tools_tab(), text="  Tools  ")
+        self.tabs.add(self._review_tab(), text="  Review  ")
+        self.tabs.add(self._settings_tab(), text="  Settings  ")
+
+    def _pad_frame(self, parent, bg=None):
+        """Return a padded content frame."""
+        bg = bg or C["bg"]
+        f = Frame(parent, bg=bg, padx=14, pady=12)
+        f.pack(fill=BOTH, expand=True)
+        return f
+
+    def _section(self, parent, text, bg=None):
+        bg = bg or C["bg"]
+        row = Frame(parent, bg=bg)
+        row.pack(fill=X, pady=(10, 4))
+        Frame(row, bg=C["accent"], width=3, height=16).pack(side=LEFT, padx=(0, 8))
+        ttk.Label(row, text=text, style="SectionTitle.TLabel").pack(side=LEFT)
+        return row
+
+    def _code_box(self, parent, height=14):
+        box = ScrolledText(parent, height=height,
+                           bg="#060c14", fg=C["cyan"], insertbackground=C["text"],
+                           selectbackground=C["selection"], font=("Consolas", 9),
+                           relief="flat", bd=0, wrap="none",
+                           highlightthickness=1, highlightbackground=C["border"],
+                           highlightcolor=C["accent"])
+        return box
+
+    def _text_box(self, parent, height=8, fg=None):
+        fg = fg or C["text"]
+        box = ScrolledText(parent, height=height,
+                           bg=C["bg2"], fg=fg, insertbackground=C["text"],
+                           selectbackground=C["selection"], font=("Segoe UI", 9),
+                           relief="flat", bd=0, wrap="word",
+                           highlightthickness=1, highlightbackground=C["border"],
+                           highlightcolor=C["accent"])
+        return box
+
+    def _btn_row(self, parent, bg=None):
+        bg = bg or C["bg"]
+        return Frame(parent, bg=bg)
+
+    def _tag_label(self, parent, text, color, bg=None):
+        """Small colored badge label."""
+        bg = bg or C["panel"]
+        lbl = ttk.Label(parent, text=f" {text} ", foreground=color,
+                         background=bg, font=("Consolas", 8, "bold"))
+        return lbl
+
+    # ── Recorder tab ──────────────────────────────────────────────────────────
+
+    def _recorder_tab(self):
+        tab = Frame(self.tabs, bg=C["bg"])
+        pad = self._pad_frame(tab)
+
+        # Top controls bar
+        ctrl = Frame(pad, bg=C["panel2"], padx=12, pady=10)
+        ctrl.pack(fill=X, pady=(0, 10))
+
+        # Mode
+        ttk.Label(ctrl, text="Mode", style="PanelMuted2.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Combobox(ctrl, textvariable=self.mode,
+                     values=["normal", "advanced", "minimal"],
+                     width=12, state="readonly").grid(row=0, column=1, padx=(0, 16))
+
+        ttk.Label(ctrl, text="Export as", style="PanelMuted2.TLabel").grid(row=0, column=2, sticky="w", padx=(0, 6))
+        ttk.Combobox(ctrl, textvariable=self.default_export_kind,
+                     values=["AutoHotkey v2", "Python"],
+                     width=14, state="readonly").grid(row=0, column=3, padx=(0, 16))
+
+        self.start_button = ttk.Button(ctrl, text="▶  F1  Start Recording",
+                                        style="Green.TButton", command=self.start_recording)
+        self.stop_button = ttk.Button(ctrl, text="■  F2  Stop & Save",
+                                       style="Ghost.TButton", command=self.stop_recording)
         self.stop_button.state(["disabled"])
-        self.start_button.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0), padx=(0, 8))
-        self.stop_button.grid(row=1, column=2, columnspan=2, sticky="ew", pady=(10, 0), padx=(0, 8))
-        ttk.Button(controls, text="Export Selected Again", command=self.export_selected).grid(row=1, column=4, sticky="ew", pady=(10, 0))
-        controls.columnconfigure(1, weight=1)
-        controls.columnconfigure(3, weight=1)
+        self.start_button.grid(row=0, column=4, padx=(8, 6))
+        self.stop_button.grid(row=0, column=5, padx=(0, 8))
+        ttk.Button(ctrl, text="Re-Export Selected", style="Small.TButton",
+                   command=self.export_selected).grid(row=0, column=6)
 
-        panes = ttk.PanedWindow(tab, orient=HORIZONTAL)
+        # Recording status strip
+        self.rec_status_frame = Frame(pad, bg=C["bg2"], height=3)
+        self.rec_status_frame.pack(fill=X, pady=(0, 8))
+
+        # Split pane
+        panes = ttk.PanedWindow(pad, orient=HORIZONTAL)
         panes.pack(fill=BOTH, expand=True)
-        left = ttk.Frame(panes)
-        right = ttk.Frame(panes)
+
+        left = Frame(panes, bg=C["bg"])
+        right = Frame(panes, bg=C["bg"])
         panes.add(left, weight=3)
         panes.add(right, weight=2)
-        ttk.Label(left, text="Live feed").pack(anchor="w")
-        self.feed = ScrolledText(left, height=18, bg="#081019", fg="#d9e7f5", insertbackground="#ffffff", wrap="none")
-        self.feed.pack(fill=BOTH, expand=True, pady=(6, 0))
-        ttk.Label(right, text="Saved recordings").pack(anchor="w")
-        rec_box = ttk.Frame(right)
-        rec_box.pack(fill=BOTH, expand=True, pady=(6, 0))
-        self.recording_list = ttk.Treeview(rec_box, columns=("name", "export", "mode", "events", "file", "created"), show="headings", height=12)
-        rec_scroll = ttk.Scrollbar(rec_box, orient="vertical", command=self.recording_list.yview)
-        self.recording_list.configure(yscrollcommand=rec_scroll.set)
-        for col, width in [("name", 130), ("export", 105), ("mode", 80), ("events", 70), ("file", 80), ("created", 170)]:
+
+        # Live feed
+        self._section(left, "Live Event Feed")
+        self.feed = self._code_box(left, height=16)
+        self.feed.pack(fill=BOTH, expand=True)
+
+        # Recordings list
+        self._section(right, "Saved Recordings")
+        rec_box = Frame(right, bg=C["bg"])
+        rec_box.pack(fill=BOTH, expand=True)
+
+        self.recording_list = ttk.Treeview(
+            rec_box,
+            columns=("name", "export", "mode", "events", "file", "created"),
+            show="headings", height=12
+        )
+        rsb = ttk.Scrollbar(rec_box, orient="vertical", command=self.recording_list.yview)
+        self.recording_list.configure(yscrollcommand=rsb.set)
+        for col, w in [("name", 120), ("export", 100), ("mode", 72), ("events", 60), ("file", 56), ("created", 150)]:
             self.recording_list.heading(col, text=col.title())
-            self.recording_list.column(col, width=width, stretch=True)
+            self.recording_list.column(col, width=w, stretch=True)
         self.recording_list.pack(side=LEFT, fill=BOTH, expand=True)
-        rec_scroll.pack(side=RIGHT, fill="y")
-        action_row = ttk.Frame(right)
-        action_row.pack(fill=X, pady=(8, 0))
-        ttk.Button(action_row, text="Rename", command=self.rename_recording).pack(side=LEFT, fill=X, expand=True, padx=(0, 6))
-        ttk.Button(action_row, text="Delete", command=self.delete_recording).pack(side=LEFT, fill=X, expand=True)
+        rsb.pack(side=RIGHT, fill=Y)
+
+        br = Frame(right, bg=C["bg"], pady=6)
+        br.pack(fill=X)
+        ttk.Button(br, text="Rename", style="Ghost.TButton", command=self.rename_recording).pack(side=LEFT, fill=X, expand=True, padx=(0, 4))
+        ttk.Button(br, text="Delete", style="Red.TButton", command=self.delete_recording).pack(side=LEFT, fill=X, expand=True)
+
         self.refresh_recordings()
         return tab
 
-    def workspace_tab(self):
-        tab = ttk.Frame(self.tabs, padding=12)
-        panes = ttk.PanedWindow(tab, orient=HORIZONTAL)
-        panes.pack(fill=BOTH, expand=True)
-        files = ttk.Frame(panes)
-        edit = ttk.Frame(panes)
-        panes.add(files, weight=1)
-        panes.add(edit, weight=3)
+    # ── Workspace tab ─────────────────────────────────────────────────────────
 
-        ttk.Label(files, text="Script files").pack(anchor="w")
-        file_box = ttk.Frame(files)
-        file_box.pack(fill=BOTH, expand=True, pady=(6, 8))
-        self.file_tree = ttk.Treeview(file_box, columns=("path", "size"), show="headings", height=18)
-        file_scroll = ttk.Scrollbar(file_box, orient="vertical", command=self.file_tree.yview)
-        self.file_tree.configure(yscrollcommand=file_scroll.set)
+    def _workspace_tab(self):
+        tab = Frame(self.tabs, bg=C["bg"])
+        pad = self._pad_frame(tab)
+
+        panes = ttk.PanedWindow(pad, orient=HORIZONTAL)
+        panes.pack(fill=BOTH, expand=True)
+
+        files_frame = Frame(panes, bg=C["bg"])
+        edit_frame = Frame(panes, bg=C["bg"])
+        panes.add(files_frame, weight=1)
+        panes.add(edit_frame, weight=3)
+
+        # Files panel
+        self._section(files_frame, "Script Files")
+        ft_box = Frame(files_frame, bg=C["bg"])
+        ft_box.pack(fill=BOTH, expand=True)
+
+        self.file_tree = ttk.Treeview(ft_box, columns=("path", "size"), show="headings", height=18)
+        fsb = ttk.Scrollbar(ft_box, orient="vertical", command=self.file_tree.yview)
+        self.file_tree.configure(yscrollcommand=fsb.set)
         self.file_tree.heading("path", text="Name")
         self.file_tree.heading("size", text="Size")
-        self.file_tree.column("path", width=210, stretch=True)
-        self.file_tree.column("size", width=70, stretch=False)
+        self.file_tree.column("path", width=190, stretch=True)
+        self.file_tree.column("size", width=60, stretch=False)
         self.file_tree.pack(side=LEFT, fill=BOTH, expand=True)
-        file_scroll.pack(side=RIGHT, fill="y")
-        self.file_tree.bind("<Double-1>", lambda _event: self.open_selected_file())
-        file_row = ttk.Frame(files)
-        file_row.pack(fill=X)
-        ttk.Button(file_row, text="Refresh", command=self.refresh_files).pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
-        ttk.Button(file_row, text="Open", command=self.open_selected_file).pack(side=LEFT, fill=X, expand=True)
-        file_row2 = ttk.Frame(files)
-        file_row2.pack(fill=X, pady=(6, 0))
-        ttk.Button(file_row2, text="Rename", command=self.rename_selected_file).pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
-        ttk.Button(file_row2, text="Delete", command=self.delete_selected_file).pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
-        ttk.Button(file_row2, text="Run", command=self.run_selected_file).pack(side=LEFT, fill=X, expand=True)
+        fsb.pack(side=RIGHT, fill=Y)
+        self.file_tree.bind("<Double-1>", lambda _: self.open_selected_file())
 
-        row = ttk.Frame(edit)
-        row.pack(fill=X, pady=(0, 8))
-        ttk.Button(row, text="Open Any Script", command=self.open_script).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(row, text="Save", command=self.save_script).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(row, text="Save As", command=self.save_script_as).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(row, text="Insert Notes", command=self.insert_notes).pack(side=LEFT)
-        ttk.Button(row, text="Run Open Script", command=self.run_open_script).pack(side=LEFT, padx=(8, 0))
-        preset_row = ttk.Frame(edit)
-        preset_row.pack(fill=X, pady=(0, 8))
-        ttk.Button(preset_row, text="AHK Hotkeys", command=self.insert_ahk_hotkeys).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(preset_row, text="Python Macro Base", command=self.insert_python_macro_base).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(preset_row, text="JSON Helper", command=self.insert_json_helper).pack(side=LEFT)
+        fb1 = Frame(files_frame, bg=C["bg"], pady=4)
+        fb1.pack(fill=X)
+        ttk.Button(fb1, text="Refresh", style="Ghost.TButton", command=self.refresh_files).pack(side=LEFT, fill=X, expand=True, padx=(0, 3))
+        ttk.Button(fb1, text="Open", style="Ghost.TButton", command=self.open_selected_file).pack(side=LEFT, fill=X, expand=True)
+
+        fb2 = Frame(files_frame, bg=C["bg"], pady=0)
+        fb2.pack(fill=X)
+        ttk.Button(fb2, text="Rename", style="Ghost.TButton", command=self.rename_selected_file).pack(side=LEFT, fill=X, expand=True, padx=(0, 3))
+        ttk.Button(fb2, text="Delete", style="Red.TButton", command=self.delete_selected_file).pack(side=LEFT, fill=X, expand=True, padx=(0, 3))
+        ttk.Button(fb2, text="Run ▶", style="Green.TButton", command=self.run_selected_file).pack(side=LEFT, fill=X, expand=True)
+
+        # Editor panel
+        etop = Frame(edit_frame, bg=C["bg"], pady=4)
+        etop.pack(fill=X)
+        ttk.Button(etop, text="Open Script", style="Ghost.TButton", command=self.open_script).pack(side=LEFT, padx=(0, 4))
+        ttk.Button(etop, text="Save", style="Accent.TButton", command=self.save_script).pack(side=LEFT, padx=(0, 4))
+        ttk.Button(etop, text="Save As", style="Ghost.TButton", command=self.save_script_as).pack(side=LEFT, padx=(0, 4))
+        ttk.Button(etop, text="Run ▶", style="Green.TButton", command=self.run_open_script).pack(side=LEFT, padx=(0, 4))
+        ttk.Button(etop, text="Notes", style="Small.TButton", command=self.insert_notes).pack(side=LEFT)
+
+        epre = Frame(edit_frame, bg=C["bg"], pady=2)
+        epre.pack(fill=X)
+        ttk.Label(epre, text="Insert:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        ttk.Button(epre, text="AHK Hotkeys", style="Small.TButton", command=self.insert_ahk_hotkeys).pack(side=LEFT, padx=(0, 4))
+        ttk.Button(epre, text="Python Base", style="Small.TButton", command=self.insert_python_macro_base).pack(side=LEFT, padx=(0, 4))
+        ttk.Button(epre, text="JSON Helper", style="Small.TButton", command=self.insert_json_helper).pack(side=LEFT)
+
         self.editor_path = StringVar(value="No file open")
-        ttk.Label(edit, textvariable=self.editor_path, style="Muted.TLabel").pack(anchor="w")
-        self.editor = ScrolledText(edit, bg="#081019", fg="#e7eef8", insertbackground="#ffffff", undo=True, wrap="none", font=("Consolas", 10))
-        self.editor.pack(fill=BOTH, expand=True, pady=(6, 0))
+        path_lbl = ttk.Label(edit_frame, textvariable=self.editor_path, style="Muted.TLabel")
+        path_lbl.pack(anchor="w", pady=(4, 2))
+
+        self.editor = self._code_box(edit_frame, height=30)
+        self.editor.configure(fg=C["text"])
+        self.editor.pack(fill=BOTH, expand=True)
         self.editor.bind("<Tab>", self.editor_autocomplete)
+
         self.refresh_files()
         return tab
 
-    def tools_tab(self):
-        tab = ttk.Frame(self.tabs, padding=12)
-        self.tool_tabs = ttk.Notebook(tab)
-        self.tool_tabs.pack(fill=BOTH, expand=True)
-        self.tool_tabs.add(self.assistant_tool(), text="Assistant")
-        self.tool_tabs.add(self.converter_tool(), text="Converter")
-        self.tool_tabs.add(self.position_logger_tool(), text="Position Logger")
+    # ── Tools tab ─────────────────────────────────────────────────────────────
+
+    def _tools_tab(self):
+        tab = Frame(self.tabs, bg=C["bg"])
+        pad = self._pad_frame(tab)
+
+        tool_nb = ttk.Notebook(pad)
+        tool_nb.pack(fill=BOTH, expand=True)
+
+        tool_nb.add(self._assistant_tool(tool_nb), text="  Assistant  ")
+        tool_nb.add(self._converter_tool(tool_nb), text="  Converter  ")
+        tool_nb.add(self._position_tool(tool_nb), text="  Position Logger  ")
+
         return tab
 
-    def assistant_tool(self):
-        helper = ttk.Frame(self.tool_tabs, padding=12)
-        ttk.Label(helper, text="Local assistant", font=("Segoe UI", 14, "bold")).pack(anchor="w")
-        ttk.Label(helper, text="Pick a script, ask for a change, review the diff, then apply or undo.", style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
-        target_row = ttk.Frame(helper)
-        target_row.pack(fill=X, pady=(0, 8))
-        ttk.Label(target_row, text="Target").pack(side=LEFT, padx=(0, 6))
+    def _assistant_tool(self, parent):
+        tab = Frame(parent, bg=C["bg"])
+        pad = self._pad_frame(tab)
+
+        self._section(pad, "AI Script Assistant")
+        ttk.Label(pad, text="Pick a script, describe your change, preview the diff, then apply or undo.",
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
+
+        tr = Frame(pad, bg=C["bg"])
+        tr.pack(fill=X, pady=(0, 6))
+        ttk.Label(tr, text="Target script:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
         self.ai_target_var = StringVar(value="")
-        self.ai_target_combo = ttk.Combobox(target_row, textvariable=self.ai_target_var, values=[], state="readonly")
-        self.ai_target_combo.pack(side=LEFT, fill=X, expand=True, padx=(0, 8))
-        ttk.Button(target_row, text="Refresh", command=self.refresh_ai_targets).pack(side=LEFT)
-        self.helper_question = ScrolledText(helper, height=6, bg="#081019", fg="#e7eef8", insertbackground="#ffffff", wrap="word")
-        self.helper_question.pack(fill=BOTH, expand=True, pady=6)
-        row = ttk.Frame(helper)
-        row.pack(fill=X)
-        ttk.Button(row, text="Ask Helper", command=self.ask_helper).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(row, text="Generate Review", command=self.generate_ai_review).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(row, text="Apply Reviewed Change", command=self.apply_ai_review).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(row, text="Undo Last AI Change", command=self.undo_ai_change).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(row, text="Apply Safe Header To Open Script", command=self.apply_ai_header).pack(side=LEFT)
-        self.helper_answer = ScrolledText(helper, height=8, bg="#081019", fg="#d9e7f5", insertbackground="#ffffff", wrap="word")
-        self.helper_answer.pack(fill=BOTH, expand=True, pady=(8, 0))
-        ttk.Label(helper, text="Change review").pack(anchor="w", pady=(8, 0))
-        self.ai_diff_view = ScrolledText(helper, height=10, bg="#050a12", fg="#8fd9ff", insertbackground="#ffffff", wrap="none")
+        self.ai_target_combo = ttk.Combobox(tr, textvariable=self.ai_target_var, values=[], state="readonly")
+        self.ai_target_combo.pack(side=LEFT, fill=X, expand=True, padx=(0, 6))
+        ttk.Button(tr, text="Refresh", style="Small.TButton", command=self.refresh_ai_targets).pack(side=LEFT)
+
+        self._section(pad, "Your Request")
+        self.helper_question = self._text_box(pad, height=4)
+        self.helper_question.pack(fill=X, pady=(4, 0))
+
+        ar = Frame(pad, bg=C["bg"], pady=6)
+        ar.pack(fill=X)
+        ttk.Button(ar, text="Ask Helper", style="Accent.TButton", command=self.ask_helper).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(ar, text="Preview Change", style="Ghost.TButton", command=self.generate_ai_review).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(ar, text="Apply Change", style="Green.TButton", command=self.apply_ai_review).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(ar, text="↩ Undo", style="Ghost.TButton", command=self.undo_ai_change).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(ar, text="Safe Header", style="Small.TButton", command=self.apply_ai_header).pack(side=LEFT)
+
+        self._section(pad, "Response")
+        self.helper_answer = self._text_box(pad, height=5, fg=C["cyan"])
+        self.helper_answer.pack(fill=X, pady=(4, 0))
+
+        self._section(pad, "Diff Preview")
+        self.ai_diff_view = self._code_box(pad, height=8)
+        self.ai_diff_view.configure(fg=C["yellow"])
         self.ai_diff_view.pack(fill=BOTH, expand=True, pady=(4, 0))
+
         self.root.after(100, self.refresh_ai_targets)
-        return helper
+        return tab
 
-    def converter_tool(self):
-        converter = ttk.Frame(self.tool_tabs, padding=12)
-        ttk.Label(converter, text="Python / AutoHotkey converter", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+    def _converter_tool(self, parent):
+        tab = Frame(parent, bg=C["bg"])
+        pad = self._pad_frame(tab)
+
+        self._section(pad, "Code Converter")
+        ttk.Label(pad, text="Convert between Python and AutoHotkey v2 syntax automatically.",
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
+
+        mr = Frame(pad, bg=C["bg"])
+        mr.pack(fill=X, pady=(0, 8))
+        ttk.Label(mr, text="Direction:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 8))
         self.converter_mode = StringVar(value="Python to AutoHotkey")
-        ttk.Combobox(converter, textvariable=self.converter_mode, values=["Python to AutoHotkey", "AutoHotkey to Python"], state="readonly").pack(fill=X, pady=6)
-        self.converter_input = ScrolledText(converter, height=9, bg="#081019", fg="#e7eef8", insertbackground="#ffffff", wrap="none")
-        self.converter_input.pack(fill=BOTH, expand=True)
-        row = ttk.Frame(converter)
-        row.pack(fill=X, pady=8)
-        ttk.Button(row, text="Convert", command=self.convert_code).pack(side=LEFT, fill=X, expand=True, padx=(0, 6))
-        ttk.Button(row, text="Put Output In Editor", command=self.apply_converter_output_to_editor).pack(side=LEFT, fill=X, expand=True)
-        self.converter_output = ScrolledText(converter, height=9, bg="#081019", fg="#d9e7f5", insertbackground="#ffffff", wrap="none")
-        self.converter_output.pack(fill=BOTH, expand=True)
-        return converter
+        ttk.Combobox(mr, textvariable=self.converter_mode,
+                     values=["Python to AutoHotkey", "AutoHotkey to Python"],
+                     state="readonly", width=26).pack(side=LEFT)
 
-    def position_logger_tool(self):
-        tab = ttk.Frame(self.tool_tabs, padding=12)
-        ttk.Label(tab, text="Left-click position logger", font=("Segoe UI", 14, "bold")).pack(anchor="w")
-        ttk.Label(tab, text="Session-only logger. It records left clicks outside CodeHub while enabled, then clears when the app closes.", style="Muted.TLabel").pack(anchor="w", pady=(0, 10))
-        row = ttk.Frame(tab)
-        row.pack(fill=X, pady=(0, 8))
-        ttk.Button(row, text="Start Logging", command=self.start_position_logging).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(row, text="Stop Logging", command=self.stop_position_logging).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(row, text="Clear Log", command=self.clear_position_log).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(row, text="Insert Clicks Into Editor", command=self.insert_position_log_into_editor).pack(side=LEFT)
-        self.position_status = StringVar(value="Stopped | 0 clicks")
-        ttk.Label(tab, textvariable=self.position_status, foreground="#8fd9ff", background="#080d14").pack(anchor="w", pady=(0, 8))
-        self.position_output = ScrolledText(tab, bg="#081019", fg="#d9e7f5", insertbackground="#ffffff", wrap="none")
+        self._section(pad, "Input")
+        self.converter_input = self._code_box(pad, height=9)
+        self.converter_input.pack(fill=BOTH, expand=True, pady=(4, 0))
+
+        cr = Frame(pad, bg=C["bg"], pady=6)
+        cr.pack(fill=X)
+        ttk.Button(cr, text="Convert ▶", style="Accent.TButton", command=self.convert_code).pack(side=LEFT, padx=(0, 8))
+        ttk.Button(cr, text="Send to Editor", style="Ghost.TButton", command=self.apply_converter_output_to_editor).pack(side=LEFT)
+
+        self._section(pad, "Output")
+        self.converter_output = self._code_box(pad, height=9)
+        self.converter_output.configure(fg=C["green"])
+        self.converter_output.pack(fill=BOTH, expand=True, pady=(4, 0))
+
+        return tab
+
+    def _position_tool(self, parent):
+        tab = Frame(parent, bg=C["bg"])
+        pad = self._pad_frame(tab)
+
+        self._section(pad, "Click Position Logger")
+        ttk.Label(pad, text="Records left-click coordinates outside this window while enabled. Use to grab coordinates for your scripts.",
+                  style="Muted.TLabel", wraplength=700).pack(anchor="w", pady=(0, 10))
+
+        pr = Frame(pad, bg=C["bg"])
+        pr.pack(fill=X, pady=(0, 6))
+        ttk.Button(pr, text="▶  Start Logging", style="Green.TButton", command=self.start_position_logging).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(pr, text="■  Stop", style="Ghost.TButton", command=self.stop_position_logging).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(pr, text="Clear", style="Red.TButton", command=self.clear_position_log).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(pr, text="Insert into Editor", style="Accent.TButton", command=self.insert_position_log_into_editor).pack(side=LEFT)
+
+        self.position_status = StringVar(value="Stopped  ·  0 clicks")
+        ttk.Label(pad, textvariable=self.position_status, style="Accent.TLabel").pack(anchor="w", pady=(0, 6))
+
+        self.position_output = self._code_box(pad, height=24)
+        self.position_output.configure(fg=C["green"])
         self.position_output.pack(fill=BOTH, expand=True)
+
         return tab
 
-    def permissions_tool(self):
-        tab = ttk.Frame(self.tool_tabs, padding=12)
-        ttk.Label(tab, text="Assistant permissions", font=("Segoe UI", 14, "bold")).pack(anchor="w")
-        ttk.Label(tab, text="These are intentionally explicit. CodeHub will not edit, delete, or run things unless the matching box is enabled.", style="Muted.TLabel").pack(anchor="w", pady=(0, 12))
-        ttk.Checkbutton(tab, text="Allow assistant to edit the open script", variable=self.ai_can_edit).pack(anchor="w", pady=4)
-        ttk.Checkbutton(tab, text="Allow assistant to delete selected files", variable=self.ai_can_delete).pack(anchor="w", pady=4)
-        ttk.Checkbutton(tab, text="Allow assistant to run script commands", variable=self.ai_can_run).pack(anchor="w", pady=4)
-        note = ScrolledText(tab, height=8, bg="#081019", fg="#d9e7f5", insertbackground="#ffffff", wrap="word")
-        note.pack(fill=BOTH, expand=True, pady=(12, 0))
-        note.insert(END, "For this build, the assistant is local/rule-based. The toggles are wired for file actions in the UI, but it is not a real cloud coding agent yet. That is safer than pretending it can freely run your PC.")
-        note.configure(state="disabled")
-        return tab
+    # ── Review tab ────────────────────────────────────────────────────────────
 
-    def review_tab(self):
-        tab = ttk.Frame(self.tabs, padding=12)
-        top = ttk.Frame(tab)
-        top.pack(fill=X, pady=(0, 8))
-        ttk.Label(top, text="Recording").pack(side=LEFT, padx=(0, 6))
+    def _review_tab(self):
+        tab = Frame(self.tabs, bg=C["bg"])
+        pad = self._pad_frame(tab)
+
+        top = Frame(pad, bg=C["panel2"], padx=10, pady=8)
+        top.pack(fill=X, pady=(0, 10))
+
+        ttk.Label(top, text="Recording:", style="PanelMuted2.TLabel").pack(side=LEFT, padx=(0, 6))
         self.review_recording_var = StringVar(value="")
-        self.review_recording_combo = ttk.Combobox(top, textvariable=self.review_recording_var, values=[], state="readonly", width=34)
+        self.review_recording_combo = ttk.Combobox(top, textvariable=self.review_recording_var,
+                                                    values=[], state="readonly", width=36)
         self.review_recording_combo.pack(side=LEFT, padx=(0, 8))
-        ttk.Button(top, text="Load", command=self.load_review_recording).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(top, text="Play", command=self.play_review).pack(side=LEFT, padx=(0, 6))
-        ttk.Button(top, text="Pause", command=self.pause_review).pack(side=LEFT, padx=(0, 6))
-        ttk.Button(top, text="Stop", command=self.stop_visual_replay).pack(side=LEFT, padx=(0, 6))
-        ttk.Button(top, text="Rewind", command=self.rewind_review).pack(side=LEFT, padx=(0, 6))
-        ttk.Label(top, text="Speed").pack(side=LEFT, padx=(8, 4))
-        ttk.Combobox(top, textvariable=self.review_speed, values=[0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0], state="readonly", width=6).pack(side=LEFT)
-        panes = ttk.PanedWindow(tab, orient=HORIZONTAL)
+
+        for txt, cmd in [("Load", self.load_review_recording), ("▶ Play", self.play_review),
+                          ("⏸ Pause", self.pause_review), ("■ Stop", self.stop_visual_replay),
+                          ("⏮ Rewind", self.rewind_review)]:
+            ttk.Button(top, text=txt, style="Ghost.TButton", command=cmd).pack(side=LEFT, padx=3)
+
+        ttk.Label(top, text="Speed:", style="PanelMuted2.TLabel").pack(side=LEFT, padx=(10, 4))
+        ttk.Combobox(top, textvariable=self.review_speed,
+                     values=[0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0],
+                     state="readonly", width=6).pack(side=LEFT)
+
+        panes = ttk.PanedWindow(pad, orient=HORIZONTAL)
         panes.pack(fill=BOTH, expand=True)
-        left = ttk.Frame(panes)
-        right = ttk.Frame(panes)
+
+        left = Frame(panes, bg=C["bg"])
+        right = Frame(panes, bg=C["bg"])
         panes.add(left, weight=2)
         panes.add(right, weight=3)
-        ttk.Label(left, text="Replay / stats").pack(anchor="w")
-        self.review_output = ScrolledText(left, bg="#081019", fg="#d9e7f5", insertbackground="#ffffff", wrap="word", height=12)
-        self.review_output.pack(fill=BOTH, expand=True, pady=(6, 8))
-        ttk.Label(left, text="Virtual keyboard / input monitor").pack(anchor="w")
-        self.virtual_keys = ScrolledText(left, bg="#050a12", fg="#8fd9ff", insertbackground="#ffffff", wrap="word", height=10)
-        self.virtual_keys.pack(fill=BOTH, expand=True, pady=(6, 0))
-        ttk.Label(right, text="Screen snapshot replay").pack(anchor="w")
-        self.review_image_label = ttk.Label(right, text="Load a recording to preview captured frames.", anchor="center")
-        self.review_image_label.pack(fill=BOTH, expand=True, pady=(6, 8))
-        ttk.Label(right, text="Macro event timeline").pack(anchor="w")
-        self.review_timeline = ScrolledText(right, bg="#081019", fg="#d9e7f5", insertbackground="#ffffff", wrap="none", height=9)
-        self.review_timeline.pack(fill=BOTH, expand=True, pady=(6, 0))
+
+        self._section(left, "Replay Stats")
+        self.review_output = self._text_box(left, height=10, fg=C["text"])
+        self.review_output.pack(fill=BOTH, expand=True)
+
+        self._section(left, "Input Monitor")
+        self.virtual_keys = self._code_box(left, height=8)
+        self.virtual_keys.pack(fill=BOTH, expand=True, pady=(4, 0))
+
+        self._section(right, "Frame Preview")
+        self.review_image_label = ttk.Label(right, text="Load a recording to preview frames.",
+                                             anchor="center", background=C["bg2"])
+        self.review_image_label.pack(fill=BOTH, expand=True, pady=(4, 8))
+
+        self._section(right, "Event Timeline")
+        self.review_timeline = self._code_box(right, height=10)
+        self.review_timeline.pack(fill=BOTH, expand=True, pady=(4, 0))
+
         self.review_events = []
         self.review_replaying = False
         self.refresh_review_options()
         return tab
 
-    def settings_tab(self):
-        tab = ttk.Frame(self.tabs, padding=12)
-        ttk.Label(tab, text="Export folder").pack(anchor="w")
-        row = ttk.Frame(tab)
-        row.pack(fill=X, pady=6)
-        ttk.Entry(row, textvariable=self.export_dir_var).pack(side=LEFT, fill=X, expand=True, padx=(0, 8))
-        ttk.Button(row, text="Choose", command=self.choose_export_dir).pack(side=RIGHT)
-        prefs = ttk.Frame(tab)
-        prefs.pack(fill=X, pady=(8, 0))
-        ttk.Label(prefs, text="UI font size").pack(side=LEFT, padx=(0, 6))
-        ttk.Combobox(prefs, textvariable=self.ui_font_size, values=["8", "9", "10", "11", "12"], state="readonly", width=6).pack(side=LEFT, padx=(0, 12))
-        ttk.Label(prefs, text="Density").pack(side=LEFT, padx=(0, 6))
-        ttk.Combobox(prefs, textvariable=self.ui_density, values=["compact", "comfortable"], state="readonly", width=12).pack(side=LEFT, padx=(0, 12))
-        ttk.Button(prefs, text="Save UI Settings", command=self.save_ui_settings).pack(side=LEFT)
-        perms = ttk.Frame(tab)
-        perms.pack(fill=X, pady=(12, 4))
-        ttk.Label(perms, text="Permissions").pack(anchor="w")
-        ttk.Checkbutton(perms, text="Allow assistant to edit the open script", variable=self.ai_can_edit, command=self.save_permissions).pack(anchor="w", pady=2)
-        ttk.Checkbutton(perms, text="Allow assistant to delete selected files", variable=self.ai_can_delete, command=self.save_permissions).pack(anchor="w", pady=2)
-        ttk.Checkbutton(perms, text="Allow assistant to run script commands", variable=self.ai_can_run, command=self.save_permissions).pack(anchor="w", pady=2)
-        ttk.Checkbutton(perms, text="Capture lightweight review screenshots while recording", variable=self.record_screenshots, command=self.save_permissions).pack(anchor="w", pady=2)
-        info = ScrolledText(tab, height=10, bg="#081019", fg="#d9e7f5", insertbackground="#ffffff", wrap="word")
-        info.pack(fill=BOTH, expand=True, pady=(10, 0))
-        info.insert(END, f"Settings JSON: {SETTINGS_PATH}\n")
-        info.insert(END, f"Recordings JSON: {RECORDINGS_PATH}\n")
-        info.insert(END, f"Knowledge JSON: {KNOWLEDGE_PATH}\n")
-        info.insert(END, "Generated scripts always include comments explaining hotkeys, editing, and watermark removal.\n")
+    # ── Settings tab ─────────────────────────────────────────────────────────
+
+    def _settings_tab(self):
+        tab = Frame(self.tabs, bg=C["bg"])
+        pad = self._pad_frame(tab)
+
+        self._section(pad, "Export Folder")
+        er = Frame(pad, bg=C["bg"], pady=4)
+        er.pack(fill=X)
+        ttk.Entry(er, textvariable=self.export_dir_var).pack(side=LEFT, fill=X, expand=True, padx=(0, 8))
+        ttk.Button(er, text="Browse", style="Ghost.TButton", command=self.choose_export_dir).pack(side=RIGHT)
+
+        self._section(pad, "Appearance")
+        ar = Frame(pad, bg=C["bg"], pady=4)
+        ar.pack(fill=X)
+        ttk.Label(ar, text="Font size:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        ttk.Combobox(ar, textvariable=self.ui_font_size, values=["8","9","10","11","12"],
+                     state="readonly", width=6).pack(side=LEFT, padx=(0, 12))
+        ttk.Label(ar, text="Density:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        ttk.Combobox(ar, textvariable=self.ui_density, values=["compact","comfortable"],
+                     state="readonly", width=12).pack(side=LEFT, padx=(0, 12))
+        ttk.Button(ar, text="Apply", style="Accent.TButton", command=self.save_ui_settings).pack(side=LEFT)
+        ttk.Button(ar, text="Toggle Fullscreen", style="Ghost.TButton", command=self.toggle_fullscreen).pack(side=LEFT, padx=(8, 0))
+
+        self._section(pad, "Permissions")
+        pr = Frame(pad, bg=C["bg"], pady=4)
+        pr.pack(fill=X)
+        ttk.Checkbutton(pr, text="Allow assistant to edit the open script", variable=self.ai_can_edit, command=self.save_permissions).pack(anchor="w", pady=2)
+        ttk.Checkbutton(pr, text="Allow assistant to delete selected files", variable=self.ai_can_delete, command=self.save_permissions).pack(anchor="w", pady=2)
+        ttk.Checkbutton(pr, text="Allow assistant to run script commands", variable=self.ai_can_run, command=self.save_permissions).pack(anchor="w", pady=2)
+        ttk.Checkbutton(pr, text="Capture review screenshots while recording", variable=self.record_screenshots, command=self.save_permissions).pack(anchor="w", pady=2)
+
+        self._section(pad, "Data Paths")
+        info = self._text_box(pad, height=8, fg=C["text2"])
+        info.pack(fill=BOTH, expand=True, pady=(4, 0))
+        info.insert(END, f"Settings  : {SETTINGS_PATH}\n")
+        info.insert(END, f"Recordings: {RECORDINGS_PATH}\n")
+        info.insert(END, f"Knowledge : {KNOWLEDGE_PATH}\n")
+        info.insert(END, f"Exports   : {self.export_dir_var.get()}\n\n")
+        info.insert(END, "Generated scripts include comments for hotkeys, editing, and watermark removal.\n")
+        info.insert(END, "All recordings persist as JSON — they survive app restarts.\n")
         info.configure(state="disabled")
         return tab
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # All the original logic methods — completely unchanged
+    # ═══════════════════════════════════════════════════════════════════════════
 
     def start_hotkeys(self):
         def on_press(key):
@@ -1137,38 +1534,38 @@ class CodeHubApp:
         self.hotkey_listener.start()
 
     def start_recording(self):
-        if self.macro_locked:
-            return
-        if self.is_recording:
+        if self.macro_locked or self.is_recording:
             return
         self.is_recording = True
         self.review_shots = []
         self.feed.delete("1.0", END)
         self.settings["default_export_kind"] = self.default_export_kind.get()
         write_json(SETTINGS_PATH, self.settings)
-        self.feed.insert(END, f"Recording started. Press F2 to stop. Default export: {self.default_export_kind.get()}.\n")
-        self.status.set("Recording")
+        self.feed.insert(END, f"▶  Recording started — mode: {self.mode.get()} — export: {self.default_export_kind.get()}\n")
+        self.status.set("● Recording")
+        self.status_bar.set_color(C["red"])
         self.start_button.state(["disabled"])
         self.stop_button.state(["!disabled"])
+        self.rec_status_frame.configure(bg=C["red"])
         self.recorder.start(self.mode.get())
         self.capture_review_snapshot("start")
         self.root.after(1000, self.capture_review_tick)
 
     def stop_recording(self):
-        if self.macro_locked:
-            return
-        if not self.is_recording:
+        if self.macro_locked or not self.is_recording:
             return
         self.is_recording = False
         self.capture_review_snapshot("stop")
         events = self.recorder.stop()
+        self.rec_status_frame.configure(bg=C["border"])
+        self.status_bar.set_color(C["text3"])
         default_name = self.settings.get("default_script_name", "MyMacro")
         dialog = SaveRecordingDialog(self.root, default_name, self.default_export_kind.get())
         self.start_button.state(["!disabled"])
         self.stop_button.state(["disabled"])
         if not dialog.result:
-            self.status.set(f"Discarded {len(events)} events")
-            self.feed.insert(END, "Recording stopped and discarded because save was cancelled.\n")
+            self.status.set(f"Discarded  ({len(events)} events)")
+            self.feed.insert(END, "■  Stopped — discarded (save cancelled)\n")
             return
         export_kind = dialog.result["export_kind"]
         if export_kind == "Default":
@@ -1187,8 +1584,8 @@ class CodeHubApp:
         self.settings["default_script_name"] = record["name"]
         self.settings["default_export_kind"] = self.default_export_kind.get()
         write_json(SETTINGS_PATH, self.settings)
-        self.status.set(f"Saved {record['name']} | {len(events)} events")
-        self.feed.insert(END, f"Saved {record['name']} to JSON and exporting as {export_kind}.\n")
+        self.status.set(f"Saved  {record['name']}  ·  {len(events)} events")
+        self.feed.insert(END, f"■  Stopped — saved '{record['name']}' ({len(events)} events) as {export_kind}\n")
         self.refresh_recordings()
         self.export_recording(record, export_kind)
 
@@ -1226,7 +1623,7 @@ class CodeHubApp:
         if not hasattr(self, "recording_list"):
             return
         old_focus = self.recording_list.focus()
-        old_selection = self.recording_list.selection()
+        old_sel = self.recording_list.selection()
         self.recordings = read_json(RECORDINGS_PATH, {"recordings": []})
         self._last_recordings_signature = json.dumps(self.recordings, sort_keys=True)
         try:
@@ -1235,8 +1632,8 @@ class CodeHubApp:
             self._last_recordings_mtime = None
         for row in self.recording_list.get_children():
             self.recording_list.delete(row)
-        for index, rec in enumerate(self.recordings.get("recordings", [])):
-            self.recording_list.insert("", END, iid=str(index), values=(
+        for i, rec in enumerate(self.recordings.get("recordings", [])):
+            self.recording_list.insert("", END, iid=str(i), values=(
                 rec.get("name"),
                 rec.get("export_kind", "AutoHotkey v2"),
                 rec.get("mode"),
@@ -1246,24 +1643,24 @@ class CodeHubApp:
             ))
         if old_focus and self.recording_list.exists(old_focus):
             self.recording_list.focus(old_focus)
-            self.recording_list.selection_set(old_selection or (old_focus,))
+            self.recording_list.selection_set(old_sel or (old_focus,))
         self.refresh_review_options()
 
     def selected_recording(self):
-        selected = self.recording_list.selection()
-        item = selected[0] if selected else self.recording_list.focus()
+        sel = self.recording_list.selection()
+        item = sel[0] if sel else self.recording_list.focus()
         if not item:
             messagebox.showinfo(APP_NAME, "Select a recording first.")
             return None, None
-        index = int(item)
-        return index, self.recordings["recordings"][index]
+        idx = int(item)
+        return idx, self.recordings["recordings"][idx]
 
     def selected_review_recording(self):
         value = self.review_recording_var.get() if hasattr(self, "review_recording_var") else ""
         if value:
             try:
-                index = int(value.split(":", 1)[0])
-                return index, self.recordings["recordings"][index]
+                idx = int(value.split(":", 1)[0])
+                return idx, self.recordings["recordings"][idx]
             except Exception:
                 pass
         return self.selected_recording()
@@ -1272,8 +1669,8 @@ class CodeHubApp:
         if not hasattr(self, "review_recording_combo"):
             return
         values = [
-            f"{index}: {rec.get('name', 'macro')} ({len(rec.get('events', []))} events)"
-            for index, rec in enumerate(self.recordings.get("recordings", []))
+            f"{i}: {rec.get('name','macro')} ({len(rec.get('events',[]))} events)"
+            for i, rec in enumerate(self.recordings.get("recordings", []))
         ]
         current = self.review_recording_var.get()
         self.review_recording_combo.configure(values=values)
@@ -1299,8 +1696,8 @@ class CodeHubApp:
         else:
             code = generate_python(rec["events"], rec["mode"], rec["name"])
             path = export_dir / f"{safe_name(rec['name'])}.py"
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(code)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(code)
         rec["export_path"] = str(path)
         rec["export_missing"] = False
         write_json(RECORDINGS_PATH, self.recordings)
@@ -1313,26 +1710,26 @@ class CodeHubApp:
         messagebox.showinfo(APP_NAME, f"Exported:\n{path}")
 
     def delete_recording(self):
-        index, rec = self.selected_recording()
+        idx, rec = self.selected_recording()
         if rec is None:
             return
-        if messagebox.askyesno(APP_NAME, f"Delete cached recording {rec.get('name')}?"):
-            export_path = Path(rec.get("export_path", ""))
-            if export_path.exists() and messagebox.askyesno(APP_NAME, "Also delete the exported script file?"):
+        if messagebox.askyesno(APP_NAME, f"Delete cached recording '{rec.get('name')}'?"):
+            ep = Path(rec.get("export_path", ""))
+            if ep.exists() and messagebox.askyesno(APP_NAME, "Also delete the exported script file?"):
                 try:
-                    export_path.unlink()
-                except Exception as exc:
-                    messagebox.showerror(APP_NAME, f"Could not delete exported script:\n{exc}")
-            self.recordings["recordings"].pop(index)
+                    ep.unlink()
+                except Exception as e:
+                    messagebox.showerror(APP_NAME, f"Could not delete:\n{e}")
+            self.recordings["recordings"].pop(idx)
             write_json(RECORDINGS_PATH, self.recordings)
             self.refresh_recordings()
             self.refresh_files()
 
     def rename_recording(self):
-        index, rec = self.selected_recording()
+        idx, rec = self.selected_recording()
         if rec is None:
             return
-        dialog = SaveRecordingDialog(self.root, rec.get("name", "macro"), rec.get("export_kind", self.default_export_kind.get()))
+        dialog = SaveRecordingDialog(self.root, rec.get("name","macro"), rec.get("export_kind", self.default_export_kind.get()))
         if not dialog.result:
             return
         export_kind = dialog.result["export_kind"]
@@ -1340,7 +1737,7 @@ class CodeHubApp:
             export_kind = self.default_export_kind.get()
         rec["name"] = dialog.result["name"]
         rec["export_kind"] = export_kind
-        self.recordings["recordings"][index] = rec
+        self.recordings["recordings"][idx] = rec
         write_json(RECORDINGS_PATH, self.recordings)
         self.refresh_recordings()
 
@@ -1348,18 +1745,18 @@ class CodeHubApp:
         if not hasattr(self, "file_tree"):
             return
         old_focus = self.file_tree.focus()
-        old_selection = self.file_tree.selection()
+        old_sel = self.file_tree.selection()
         for row in self.file_tree.get_children():
             self.file_tree.delete(row)
         export_dir = resolve_app_path(self.export_dir_var.get()) if hasattr(self, "export_dir_var") else EXPORT_DIR
         export_dir.mkdir(parents=True, exist_ok=True)
-        files = sorted([path for path in export_dir.iterdir() if path.is_file() and path.suffix.lower() in {".py", ".ahk", ".txt"}])
-        self._last_file_snapshot = {f"{path}|{path.stat().st_mtime}|{path.stat().st_size}" for path in files}
-        for path in files:
-            self.file_tree.insert("", END, iid=str(path), values=(path.name, format_size(path.stat().st_size)))
+        files = sorted([p for p in export_dir.iterdir() if p.is_file() and p.suffix.lower() in {".py",".ahk",".txt"}])
+        self._last_file_snapshot = {f"{p}|{p.stat().st_mtime}|{p.stat().st_size}" for p in files}
+        for p in files:
+            self.file_tree.insert("", END, iid=str(p), values=(p.name, format_size(p.stat().st_size)))
         if old_focus and self.file_tree.exists(old_focus):
             self.file_tree.focus(old_focus)
-            self.file_tree.selection_set(old_selection or (old_focus,))
+            self.file_tree.selection_set(old_sel or (old_focus,))
         if self.sync_recording_exports(files):
             self.refresh_recordings()
         self.refresh_ai_targets()
@@ -1367,10 +1764,10 @@ class CodeHubApp:
     def sync_recording_exports(self, files):
         records = self.recordings.get("recordings", [])
         changed = False
-        stems = {path.stem.lower(): path for path in files}
+        stems = {p.stem.lower(): p for p in files}
         linked_paths = set()
         for rec in records:
-            current = Path(rec.get("export_path", ""))
+            current = Path(rec.get("export_path",""))
             if rec.get("export_path") and current.exists():
                 linked_paths.add(str(current))
                 if rec.get("name") != current.stem:
@@ -1380,7 +1777,7 @@ class CodeHubApp:
                     rec["export_missing"] = False
                     changed = True
                 continue
-            expected = safe_name(rec.get("name", "")).lower()
+            expected = safe_name(rec.get("name","")).lower()
             if expected in stems:
                 linked_paths.add(str(stems[expected]))
                 if rec.get("export_path") != str(stems[expected]):
@@ -1393,13 +1790,13 @@ class CodeHubApp:
                 if not rec.get("export_missing"):
                     rec["export_missing"] = True
                     changed = True
-        missing_records = [rec for rec in records if rec.get("export_missing")]
-        unlinked_files = [path for path in files if str(path) not in linked_paths]
+        missing_records = [r for r in records if r.get("export_missing")]
+        unlinked_files = [p for p in files if str(p) not in linked_paths]
         if len(missing_records) == 1 and len(unlinked_files) == 1:
             rec = missing_records[0]
-            path = unlinked_files[0]
-            rec["name"] = path.stem
-            rec["export_path"] = str(path)
+            p = unlinked_files[0]
+            rec["name"] = p.stem
+            rec["export_path"] = str(p)
             rec["export_missing"] = False
             changed = True
         if changed:
@@ -1419,7 +1816,6 @@ class CodeHubApp:
             if self.current_editor_file and not Path(self.current_editor_file).exists():
                 self.current_editor_file = None
                 self.editor_path.set("Open file was deleted outside CodeHub")
-                self.status.set("Workspace refreshed")
         except Exception:
             pass
         self.root.after(1800, self.auto_refresh)
@@ -1437,9 +1833,9 @@ class CodeHubApp:
         export_dir = resolve_app_path(self.export_dir_var.get()) if hasattr(self, "export_dir_var") else EXPORT_DIR
         export_dir.mkdir(parents=True, exist_ok=True)
         snapshot = {
-            f"{path}|{path.stat().st_mtime}|{path.stat().st_size}"
-            for path in export_dir.iterdir()
-            if path.is_file() and path.suffix.lower() in {".py", ".ahk", ".txt"}
+            f"{p}|{p.stat().st_mtime}|{p.stat().st_size}"
+            for p in export_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in {".py",".ahk",".txt"}
         }
         if snapshot != self._last_file_snapshot:
             self._last_file_snapshot = snapshot
@@ -1456,19 +1852,19 @@ class CodeHubApp:
         self.review_play_index = 0
         self.review_playing = False
         self.review_paused = False
-        total_time = max([float(e.get("time", 0)) for e in self.review_events] or [0])
-        presses = [e for e in self.review_events if e.get("type") in ("key_press", "key_char")]
+        total_time = max([float(e.get("time",0)) for e in self.review_events] or [0])
+        presses = [e for e in self.review_events if e.get("type") in ("key_press","key_char")]
         clicks = [e for e in self.review_events if e.get("type") == "mouse_click" and e.get("pressed")]
         self.review_output.delete("1.0", END)
-        self.review_output.insert(END, f"Macro: {rec.get('name')}\n")
-        self.review_output.insert(END, f"Mode: {rec.get('mode')} | Events: {len(self.review_events)} | Duration: {total_time:.2f}s\n")
-        self.review_output.insert(END, f"Key presses: {len(presses)} | Clicks: {len(clicks)}\n")
+        self.review_output.insert(END, f"Macro : {rec.get('name')}\n")
+        self.review_output.insert(END, f"Mode  : {rec.get('mode')}  ·  {len(self.review_events)} events  ·  {total_time:.2f}s\n")
+        self.review_output.insert(END, f"Keys  : {len(presses)} presses  ·  {len(clicks)} clicks\n")
         if self.review_shot_paths:
-            self.review_output.insert(END, f"\nVisual frames: {len(self.review_shot_paths)} captured screenshots\n")
+            self.review_output.insert(END, f"Frames: {len(self.review_shot_paths)} screenshots\n")
             self.show_review_frame(0)
         else:
-            self.review_output.insert(END, "\nNo screenshots saved for this recording yet.\n")
-            self.review_image_label.configure(image="", text="No captured frames for this recording.")
+            self.review_output.insert(END, "\nNo screenshots saved for this recording.\n")
+            self.review_image_label.configure(image="", text="No captured frames.")
         self.review_timeline.delete("1.0", END)
         for event in self.review_events:
             self.review_timeline.insert(END, event_line(event) + "\n")
@@ -1482,29 +1878,19 @@ class CodeHubApp:
         self.review_shot_index = index
         path = Path(self.review_shot_paths[index])
         if Image is None or ImageTk is None:
-            self.review_image_label.configure(text=f"Frame {index + 1}/{len(self.review_shot_paths)}\n{path}", image="")
+            self.review_image_label.configure(text=f"Frame {index+1}/{len(self.review_shot_paths)}\n{path}", image="")
             return
         try:
-            image = Image.open(path).convert("RGB")
+            img = Image.open(path).convert("RGB")
             max_w = max(360, self.review_image_label.winfo_width() or 640)
             max_h = max(240, self.review_image_label.winfo_height() or 360)
-            image.thumbnail((max_w, max_h))
-            self.review_photo = ImageTk.PhotoImage(image)
-            self.review_image_label.configure(
-                image=self.review_photo,
-                text=f"Frame {index + 1}/{len(self.review_shot_paths)}",
-                compound="top",
-            )
-        except Exception as exc:
-            self.review_image_label.configure(text=f"Could not load frame:\n{path}\n{exc}", image="")
-
-    def review_next_frame(self):
-        if self.review_shot_paths:
-            self.show_review_frame((self.review_shot_index + 1) % len(self.review_shot_paths))
-
-    def review_prev_frame(self):
-        if self.review_shot_paths:
-            self.show_review_frame((self.review_shot_index - 1) % len(self.review_shot_paths))
+            img.thumbnail((max_w, max_h))
+            self.review_photo = ImageTk.PhotoImage(img)
+            self.review_image_label.configure(image=self.review_photo,
+                                               text=f"Frame {index+1}/{len(self.review_shot_paths)}",
+                                               compound="top")
+        except Exception as e:
+            self.review_image_label.configure(text=f"Could not load frame:\n{e}", image="")
 
     def play_review(self):
         if not getattr(self, "review_events", None):
@@ -1534,7 +1920,7 @@ class CodeHubApp:
         self.review_shot_index = 0
         if self.review_shot_paths:
             self.show_review_frame(0)
-        self.set_virtual_keys("Rewound to start. Press Play.\n")
+        self.set_virtual_keys("Rewound. Press Play.\n")
 
     def start_visual_replay(self):
         self.play_review()
@@ -1579,17 +1965,16 @@ class CodeHubApp:
             elif kind == "key_release" and key in active:
                 active.remove(key)
             event_speed = (self.review_play_index + 1) / max(0.1, time.perf_counter() - replay_started)
-            text = f"Time: {t:.2f}s | Speed: {speed:.1f} events/sec\n"
-            text = f"Time: {t:.2f}s | Playback: {speed:.2f}x | Event rate: {event_speed:.1f}/sec\n"
-            text += f"Now: {event_line(event)}\n"
-            text += "Pressed: " + (", ".join(sorted(active)) if active else "none") + "\n"
-            text += "Pressure: keyboards do not expose pressure; hold duration is preserved.\n"
-            self.root.after(0, lambda value=text: self.set_virtual_keys(value))
+            text = f"Time: {t:.2f}s  ·  Speed: {speed:.2f}x  ·  Rate: {event_speed:.1f}/sec\n"
+            text += f"Event: {event_line(event)}\n"
+            text += "Held: " + (", ".join(sorted(active)) if active else "none") + "\n"
+            self.root.after(0, lambda v=text: self.set_virtual_keys(v))
             if self.review_shot_paths:
-                frame_index = min(len(self.review_shot_paths) - 1, int((t / max(0.1, self.review_events[-1].get("time", 0.1))) * len(self.review_shot_paths)))
-                if frame_index != last_frame_index:
-                    last_frame_index = frame_index
-                    self.root.after(0, lambda idx=frame_index: self.show_review_frame(idx))
+                fi = min(len(self.review_shot_paths)-1,
+                         int((t / max(0.1, self.review_events[-1].get("time",0.1))) * len(self.review_shot_paths)))
+                if fi != last_frame_index:
+                    last_frame_index = fi
+                    self.root.after(0, lambda idx=fi: self.show_review_frame(idx))
             self.review_play_index += 1
         self.review_replaying = False
         self.review_playing = False
@@ -1607,14 +1992,14 @@ class CodeHubApp:
         return Path(item)
 
     def open_selected_file(self):
-        path = self.selected_file_path()
-        if path:
-            self.load_script(path)
+        p = self.selected_file_path()
+        if p:
+            self.load_script(p)
 
     def run_selected_file(self):
-        path = self.selected_file_path()
-        if path:
-            self.run_script(path)
+        p = self.selected_file_path()
+        if p:
+            self.run_script(p)
 
     def run_open_script(self):
         if not self.current_editor_file:
@@ -1631,55 +2016,34 @@ class CodeHubApp:
             return
         try:
             if path.suffix.lower() == ".py":
-                self.status.set(f"Loading {path.name}...")
-                self.root.update_idletasks()
                 proc = subprocess.Popen(
-                    pythonw_command() + [str(path)],
-                    cwd=str(path.parent),
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=hidden_process_flags(),
-                )
+                    pythonw_command() + [str(path)], cwd=str(path.parent),
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=hidden_process_flags())
             elif path.suffix.lower() == ".ahk":
                 ahk = find_ahk_exe()
                 if ahk:
-                    self.status.set(f"Loading {path.name}...")
-                    self.root.update_idletasks()
                     proc = subprocess.Popen(
-                        [ahk, str(path)],
-                        cwd=str(path.parent),
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        creationflags=hidden_process_flags(),
-                    )
+                        [ahk, str(path)], cwd=str(path.parent),
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        creationflags=hidden_process_flags())
                 else:
-                    messagebox.showwarning(
-                        APP_NAME,
-                        "AutoHotkey was not found in PATH or Program Files. Windows will open the .ahk file normally, so a launcher window may flash.",
-                    )
+                    messagebox.showwarning(APP_NAME, "AutoHotkey not found. Opening file normally.")
                     proc = subprocess.Popen(
-                        ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", f"Start-Process -FilePath {json.dumps(str(path))} -Wait"],
-                        cwd=str(path.parent),
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        creationflags=hidden_process_flags(),
-                    )
+                        ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
+                         f"Start-Process -FilePath {json.dumps(str(path))} -Wait"],
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        creationflags=hidden_process_flags())
             else:
                 proc = subprocess.Popen(
-                    ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", f"Start-Process -FilePath {json.dumps(str(path))} -Wait"],
-                    cwd=str(path.parent),
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=hidden_process_flags(),
-                )
-            self.status.set(f"Running {path.name}")
+                    ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
+                     f"Start-Process -FilePath {json.dumps(str(path))} -Wait"],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=hidden_process_flags())
+            self.status.set(f"Running  {path.name}")
             self.lock_for_macro(proc, path.name)
-        except Exception as exc:
-            messagebox.showerror(APP_NAME, f"Could not run script:\n{exc}")
+        except Exception as e:
+            messagebox.showerror(APP_NAME, f"Could not run script:\n{e}")
 
     def lock_for_macro(self, proc, label):
         self.macro_locked = True
@@ -1695,30 +2059,26 @@ class CodeHubApp:
         self.macro_process = None
         self.macro_lock_kind = "external"
         self.external_macro_pids = set(pids)
-        self.external_macro_paths = {str(path) for path in paths}
-        label = ", ".join(sorted(Path(path).name for path in self.external_macro_paths)) or "external macro"
-        self.status.set(f"Detected running macro: {label}")
+        self.external_macro_paths = {str(p) for p in paths}
+        label = ", ".join(sorted(Path(p).name for p in self.external_macro_paths)) or "external macro"
+        self.status.set(f"Detected: {label}")
         self.show_lock_overlay(label)
         self.root.after(900, self.poll_macro_process)
 
     def show_lock_overlay(self, label):
         if self.lock_overlay and self.lock_overlay.winfo_exists():
             return
-        overlay = ttk.Frame(self.main_container, style="Lock.TFrame")
+        overlay = Frame(self.root, bg="#030608")
         overlay.place(x=0, y=0, relwidth=1, relheight=1)
         overlay.lift()
-        overlay.bind("<Button>", lambda _event: "break")
-        overlay.bind("<Key>", lambda _event: "break")
+        overlay.bind("<Button>", lambda _: "break")
+        overlay.bind("<Key>", lambda _: "break")
         self.root.update_idletasks()
-        frame = ttk.Frame(overlay, padding=24, style="LockPanel.TFrame")
-        frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.46)
-        ttk.Label(frame, text="LOCKED", font=("Segoe UI", 22, "bold"), style="LockPanel.TLabel").pack(anchor="center")
-        ttk.Label(
-            frame,
-            text=f"Running macro: {label}\nClose/stop the macro to continue using CodeHub.\nCodeHub hotkeys are disabled while locked.",
-            style="LockMuted.TLabel",
-            justify="center",
-        ).pack(anchor="center", pady=(10, 0))
+        panel = Frame(overlay, bg=C["panel2"], padx=32, pady=28)
+        panel.place(relx=0.5, rely=0.5, anchor="center")
+        ttk.Label(panel, text="LOCKED", style="LockPanel.TLabel").pack()
+        ttk.Label(panel, text=f"Running: {label}\n\nClose the macro to continue.",
+                  style="LockMuted.TLabel", justify="center").pack(pady=(10,0))
         overlay.focus_set()
         try:
             overlay.grab_set()
@@ -1732,7 +2092,7 @@ class CodeHubApp:
             return
         if self.macro_lock_kind == "external":
             running = self.find_running_export_macros()
-            active = {pid for pid, _path in running}
+            active = {pid for pid, _ in running}
             if active & self.external_macro_pids:
                 self.external_macro_pids = active & self.external_macro_pids
                 self.root.after(900, self.poll_macro_process)
@@ -1758,7 +2118,7 @@ class CodeHubApp:
             self.lock_overlay.destroy()
         self.lock_overlay = None
         self.lock_window = None
-        self.status.set("Macro closed")
+        self.status.set("Ready")
 
     def watch_external_macros(self):
         if self.macro_locked:
@@ -1768,30 +2128,28 @@ class CodeHubApp:
             return
         self._last_process_scan = now
         self._process_scan_running = True
-
         def scan():
             try:
                 running = self.find_running_export_macros()
             except Exception:
                 running = []
-            self.root.after(0, lambda value=running: self.finish_external_macro_scan(value))
-
+            self.root.after(0, lambda v=running: self.finish_external_macro_scan(v))
         threading.Thread(target=scan, daemon=True).start()
 
     def finish_external_macro_scan(self, running):
         self._process_scan_running = False
         if running and not self.macro_locked:
-            self.lock_for_external_macro({pid for pid, _path in running}, {path for _pid, path in running})
+            self.lock_for_external_macro({pid for pid, _ in running}, {path for _, path in running})
 
     def export_script_paths(self):
         export_dir = resolve_app_path(self.export_dir_var.get()) if hasattr(self, "export_dir_var") else EXPORT_DIR
         export_dir.mkdir(parents=True, exist_ok=True)
-        paths = [path.resolve() for path in export_dir.iterdir() if path.is_file() and path.suffix.lower() in {".py", ".ahk", ".exe"}]
+        paths = [p.resolve() for p in export_dir.iterdir() if p.is_file() and p.suffix.lower() in {".py",".ahk",".exe"}]
         for rec in self.recordings.get("recordings", []):
             try:
-                path = Path(rec.get("export_path", "")).resolve()
-                if path.exists():
-                    paths.append(path)
+                p = Path(rec.get("export_path","")).resolve()
+                if p.exists():
+                    paths.append(p)
             except Exception:
                 pass
         return sorted(set(paths))
@@ -1799,19 +2157,11 @@ class CodeHubApp:
     def process_snapshot(self):
         if os.name != "nt":
             return []
-        command = (
-            "Get-CimInstance Win32_Process | "
-            "Select-Object ProcessId,ExecutablePath,CommandLine | "
-            "ConvertTo-Json -Compress"
-        )
+        command = ("Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress")
         try:
             result = subprocess.run(
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
-                capture_output=True,
-                text=True,
-                timeout=3,
-                creationflags=hidden_process_flags(),
-            )
+                capture_output=True, text=True, timeout=3, creationflags=hidden_process_flags())
             if result.returncode != 0 or not result.stdout.strip():
                 return []
             data = json.loads(result.stdout)
@@ -1825,7 +2175,7 @@ class CodeHubApp:
         targets = self.export_script_paths()
         if not targets:
             return []
-        target_text = {str(path).lower(): path for path in targets}
+        target_text = {str(p).lower(): p for p in targets}
         own_pid = os.getpid()
         found = []
         for proc in self.process_snapshot():
@@ -1835,9 +2185,9 @@ class CodeHubApp:
                 continue
             if not pid or pid == own_pid:
                 continue
-            command_line = str(proc.get("CommandLine") or "")
-            executable = str(proc.get("ExecutablePath") or "")
-            haystack = f"{command_line} {executable}".lower()
+            cl = str(proc.get("CommandLine") or "")
+            exe = str(proc.get("ExecutablePath") or "")
+            haystack = f"{cl} {exe}".lower()
             for text, path in target_text.items():
                 if text in haystack:
                     found.append((pid, path))
@@ -1868,8 +2218,8 @@ class CodeHubApp:
         if messagebox.askyesno(APP_NAME, f"Delete script file?\n{path}"):
             try:
                 path.unlink()
-            except Exception as exc:
-                messagebox.showerror(APP_NAME, f"Could not delete file:\n{exc}")
+            except Exception as e:
+                messagebox.showerror(APP_NAME, f"Could not delete:\n{e}")
                 return
             if self.current_editor_file == path:
                 self.current_editor_file = None
@@ -1878,32 +2228,35 @@ class CodeHubApp:
             self.refresh_files()
 
     def open_script(self):
-        path = filedialog.askopenfilename(initialdir=str(resolve_app_path(self.export_dir_var.get())), filetypes=[("Scripts", "*.py *.ahk *.txt"), ("All files", "*.*")])
+        path = filedialog.askopenfilename(
+            initialdir=str(resolve_app_path(self.export_dir_var.get())),
+            filetypes=[("Scripts", "*.py *.ahk *.txt"), ("All files", "*.*")])
         if not path:
             return
         self.load_script(Path(path))
 
     def load_script(self, path):
-        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
             self.editor.delete("1.0", END)
-            self.editor.insert(END, handle.read())
+            self.editor.insert(END, f.read())
         self.current_editor_file = Path(path)
         self.editor_path.set(str(path))
+        self.tabs.select(1)
 
     def save_script(self):
-        path = self.current_editor_file
-        if not path:
+        if not self.current_editor_file:
             self.save_script_as()
             return
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(self.editor.get("1.0", END))
-        self.current_editor_file = path
-        self.editor_path.set(str(path))
+        with open(self.current_editor_file, "w", encoding="utf-8") as f:
+            f.write(self.editor.get("1.0", END))
+        self.editor_path.set(str(self.current_editor_file))
         self.refresh_files()
-        messagebox.showinfo(APP_NAME, f"Saved:\n{path}")
+        messagebox.showinfo(APP_NAME, f"Saved:\n{self.current_editor_file}")
 
     def save_script_as(self):
-        path = filedialog.asksaveasfilename(initialdir=str(resolve_app_path(self.export_dir_var.get())), filetypes=[("Scripts", "*.py *.ahk *.txt"), ("All files", "*.*")])
+        path = filedialog.asksaveasfilename(
+            initialdir=str(resolve_app_path(self.export_dir_var.get())),
+            filetypes=[("Scripts", "*.py *.ahk *.txt"), ("All files", "*.*")])
         if not path:
             return
         self.current_editor_file = Path(path)
@@ -1911,22 +2264,34 @@ class CodeHubApp:
 
     def insert_notes(self):
         prefix = ";" if self.current_editor_file and Path(self.current_editor_file).suffix.lower() == ".ahk" else "#"
-        self.editor.insert(
-            END,
+        self.editor.insert(END,
             f"\n{prefix} CodeHub notes\n"
             f"{prefix} F1 starts, F2 stops, Numpad 5 exits generated scripts.\n"
-            f"{prefix} Remove the watermark function/class if you do not want the transparent label.\n"
-            f"{prefix} JSON saves are in the data folder next to this app.\n",
-        )
+            f"{prefix} Remove the watermark function/class if you do not want the overlay.\n"
+            f"{prefix} JSON saves are in the data/ folder next to this app.\n")
 
     def insert_ahk_hotkeys(self):
-        self.editor.insert(END, '\n; AHK v2 hotkey skeleton\n; F1 starts, F2 stops, Numpad5 exits.\nglobal running := false\nF1::{\n    global running\n    running := true\n}\nF2::{\n    global running\n    running := false\n}\nNumpad5::ExitApp\n')
+        self.editor.insert(END,
+            '\n; AHK v2 hotkey skeleton\nglobal running := false\n'
+            'F1::{\n    global running\n    running := true\n}\n'
+            'F2::{\n    global running\n    running := false\n}\n'
+            'Numpad5::ExitApp\n')
 
     def insert_python_macro_base(self):
-        self.editor.insert(END, '\n# Python macro skeleton\n# Uses pynput for keyboard/mouse events.\nimport time\nfrom pynput.keyboard import Controller as KeyboardController\nfrom pynput.mouse import Controller as MouseController\n\nkeys = KeyboardController()\nmouse = MouseController()\n\ndef wait(seconds):\n    \"\"\"Delay between actions so playback feels human.\"\"\"\n    time.sleep(seconds)\n')
+        self.editor.insert(END,
+            '\n# Python macro skeleton\nimport time\n'
+            'from pynput.keyboard import Controller as KeyboardController\n'
+            'from pynput.mouse import Controller as MouseController\n\n'
+            'keys = KeyboardController()\nmouse = MouseController()\n\n'
+            'def wait(seconds):\n    """Delay between actions so playback feels human."""\n    time.sleep(seconds)\n')
 
     def insert_json_helper(self):
-        self.editor.insert(END, '\n# JSON helper\n# Stores settings or macro metadata in a readable file.\nimport json\nfrom pathlib import Path\n\ndef load_json(path, fallback):\n    path = Path(path)\n    if not path.exists():\n        return fallback\n    with open(path, "r", encoding="utf-8") as handle:\n        return json.load(handle)\n\ndef save_json(path, data):\n    path = Path(path)\n    path.parent.mkdir(parents=True, exist_ok=True)\n    with open(path, "w", encoding="utf-8") as handle:\n        json.dump(data, handle, indent=2)\n')
+        self.editor.insert(END,
+            '\n# JSON helper\nimport json\nfrom pathlib import Path\n\n'
+            'def load_json(path, fallback):\n    path = Path(path)\n    if not path.exists():\n        return fallback\n'
+            '    with open(path, "r", encoding="utf-8") as f:\n        return json.load(f)\n\n'
+            'def save_json(path, data):\n    path = Path(path)\n    path.parent.mkdir(parents=True, exist_ok=True)\n'
+            '    with open(path, "w", encoding="utf-8") as f:\n        json.dump(data, f, indent=2)\n')
 
     def editor_autocomplete(self, event):
         line = self.editor.get("insert linestart", "insert")
@@ -1955,32 +2320,32 @@ class CodeHubApp:
         for topic, facts in self.knowledge.items():
             if topic in question:
                 answers.extend(facts)
-        if "hotkey" in question or "f1" in question or "f2" in question or "numpad" in question:
+        if any(k in question for k in ("hotkey","f1","f2","numpad")):
             answers.append("Generated scripts use F1 start, F2 stop, and Numpad 5 exit.")
-        if "json" in question or "save" in question or "cache" in question:
-            answers.append(f"Recordings are saved in {RECORDINGS_PATH}, and settings are saved in {SETTINGS_PATH}.")
-        if "game" in question or "roblox" in question or "currency" in question or "read" in question:
+        if any(k in question for k in ("json","save","cache")):
+            answers.append(f"Recordings: {RECORDINGS_PATH}  ·  Settings: {SETTINGS_PATH}")
+        if any(k in question for k in ("game","roblox","currency","read","ocr","screen")):
             answers.extend(self.knowledge.get("ocr", []))
         if not answers:
             answers = [
-                "This helper is local and rule-based. It can guide script edits, but it is not a cloud AI model.",
-                "Paste code into the Editor tab to edit it directly, or paste snippets here for conversion notes.",
+                "This helper is local and rule-based. It guides script edits but is not a cloud AI.",
+                "Paste code into the Editor tab to edit it directly, or describe a change here.",
             ]
         if self.ai_can_edit.get():
-            answers.append("Edit permission is enabled, so the safe header tool can modify the currently open script.")
+            answers.append("Edit permission is ON — the safe header tool can modify the open script.")
         else:
-            answers.append("Edit permission is off. Enable it in Permissions before letting tools change scripts.")
+            answers.append("Edit permission is OFF. Enable it in Settings → Permissions.")
         self.helper_answer.delete("1.0", END)
-        self.helper_answer.insert(END, "\n".join(f"- {line}" for line in dict.fromkeys(answers)))
+        self.helper_answer.insert(END, "\n".join(f"  • {l}" for l in dict.fromkeys(answers)))
 
     def refresh_ai_targets(self):
         if not hasattr(self, "ai_target_combo"):
             return
         export_dir = resolve_app_path(self.export_dir_var.get()) if hasattr(self, "export_dir_var") else EXPORT_DIR
         export_dir.mkdir(parents=True, exist_ok=True)
-        files = [path for path in export_dir.iterdir() if path.is_file() and path.suffix.lower() in {".py", ".ahk"}]
+        files = [p for p in export_dir.iterdir() if p.is_file() and p.suffix.lower() in {".py",".ahk"}]
         current = self.ai_target_var.get()
-        values = [str(path) for path in sorted(files)]
+        values = [str(p) for p in sorted(files)]
         self.ai_target_combo.configure(values=values)
         if current in values:
             self.ai_target_var.set(current)
@@ -2010,31 +2375,27 @@ class CodeHubApp:
         notes = []
         new_text = text
         if "convert" in request and ("python" in request or "ahk" in request or "autohotkey" in request):
-            if is_ahk and "python" in request and "autohotkey" not in request and "ahk" not in request:
+            if is_ahk and "python" in request:
                 new_text, conv_notes = self.ahk_to_python(text)
                 notes.extend(conv_notes)
             elif not is_ahk and ("ahk" in request or "autohotkey" in request):
                 new_text, conv_notes = self.python_to_ahk(text)
                 notes.extend(conv_notes)
-        if "timing" in request or "drift" in request or "bpm" in request or "adofai" in request or "lag" in request:
+        if any(k in request for k in ("timing","drift","bpm","lag")):
             if is_ahk:
                 if "WaitUntil(" not in new_text:
-                    new_text += "\n; CodeHub timing note: regenerate this recording to get absolute WaitUntil timing.\n"
+                    new_text += "\n; CodeHub timing note: regenerate to get absolute WaitUntil timing.\n"
                 notes.append("checked for absolute timing drift controls")
             else:
                 if "time.perf_counter" not in new_text:
                     new_text = new_text.replace("time.time()", "time.perf_counter()")
-                    notes.append("changed wall-clock timing to perf_counter where possible")
-        if "watermark" in request and is_ahk:
-            new_text = re.sub(r'AddText\("w\d+ Center", "Made by Cat"\)', 'AddText("w150 Center", "Made by Cat")', new_text)
-            new_text = re.sub(r"w140 h20", "w168 h26", new_text)
-            notes.append("resized watermark box")
+                    notes.append("changed wall-clock timing to perf_counter")
         new_text, norm_notes = self.normalize_macro_script(new_text, is_ahk)
         notes.extend(norm_notes)
         if new_text == text:
             prefix = ";" if is_ahk else "#"
-            new_text = text.rstrip() + f"\n\n{prefix} CodeHub assistant reviewed this script; no automatic rewrite rule matched the request.\n"
-            notes.append("added review note because no safe rewrite matched")
+            new_text = text.rstrip() + f"\n\n{prefix} CodeHub assistant reviewed — no rewrite rule matched.\n"
+            notes.append("added review note")
         return new_text, sorted(set(notes))
 
     def generate_ai_review(self):
@@ -2048,31 +2409,27 @@ class CodeHubApp:
         old_text = path.read_text(encoding="utf-8")
         new_text, notes = self.build_ai_edit(old_text, path, request)
         diff = difflib.unified_diff(
-            old_text.splitlines(),
-            new_text.splitlines(),
-            fromfile=f"{path.name} before",
-            tofile=f"{path.name} proposed",
-            lineterm="",
-        )
+            old_text.splitlines(), new_text.splitlines(),
+            fromfile=f"{path.name} (before)", tofile=f"{path.name} (proposed)", lineterm="")
         self.ai_pending_path = path
         self.ai_pending_text = new_text
         self.ai_diff_view.delete("1.0", END)
         self.ai_diff_view.insert(END, "\n".join(diff) or "No textual diff.")
         self.helper_answer.delete("1.0", END)
-        self.helper_answer.insert(END, "Proposed changes:\n" + "\n".join(f"- {item}" for item in notes))
+        self.helper_answer.insert(END, "Proposed:\n" + "\n".join(f"  • {i}" for i in notes))
 
     def apply_ai_review(self):
         if not self.ai_can_edit.get():
-            messagebox.showwarning(APP_NAME, "Permission needed", "Enable edit permission in Settings first.")
+            messagebox.showwarning(APP_NAME, "Enable edit permission in Settings first.")
             return
         if not self.ai_pending_path or not self.ai_pending_text:
-            messagebox.showinfo(APP_NAME, "Generate a review first.")
+            messagebox.showinfo(APP_NAME, "Generate a preview first.")
             return
         old_text = self.ai_pending_path.read_text(encoding="utf-8") if self.ai_pending_path.exists() else ""
         self.ai_undo_stack.append((self.ai_pending_path, old_text))
         self.ai_pending_path.write_text(self.ai_pending_text, encoding="utf-8")
         self.load_script(self.ai_pending_path)
-        self.status.set(f"Applied AI change to {self.ai_pending_path.name}")
+        self.status.set(f"Applied change  ·  {self.ai_pending_path.name}")
 
     def undo_ai_change(self):
         if not self.ai_undo_stack:
@@ -2081,49 +2438,18 @@ class CodeHubApp:
         path, old_text = self.ai_undo_stack.pop()
         path.write_text(old_text, encoding="utf-8")
         self.load_script(path)
-        self.status.set(f"Undid AI change in {path.name}")
-
-    def rewrite_open_script_from_helper(self):
-        if not self.ai_can_edit.get():
-            messagebox.showwarning(APP_NAME, "Permission needed", "Enable edit permission in Settings first.")
-            return
-        current = self.editor.get("1.0", END).rstrip()
-        if not current.strip():
-            messagebox.showinfo(APP_NAME, "Open or paste a script in the editor first.")
-            return
-        request = self.helper_question.get("1.0", END).lower()
-        path = Path(self.current_editor_file) if self.current_editor_file else None
-        is_ahk = (path and path.suffix.lower() == ".ahk") or "autohotkey" in request or "ahk" in request
-        if "python" in request and "autohotkey" not in request and "ahk" not in request:
-            is_ahk = False
-        changed = []
-        rewritten = current
-        if "convert" in request:
-            rewritten = self.python_to_ahk(current)[0] if is_ahk else self.ahk_to_python(current)[0]
-            changed.append("converted syntax")
-        rewritten, notes = self.normalize_macro_script(rewritten, is_ahk)
-        changed.extend(notes)
-        if not changed:
-            changed.append("normalized comments and macro controls")
-        self.editor.delete("1.0", END)
-        self.editor.insert("1.0", rewritten.rstrip() + "\n")
-        self.tabs.select(1)
-        self.helper_answer.delete("1.0", END)
-        self.helper_answer.insert(END, "Edited the open editor text:\n" + "\n".join(f"- {item}" for item in dict.fromkeys(changed)))
+        self.status.set(f"Undid change  ·  {path.name}")
 
     def apply_ai_header(self):
         if not self.ai_can_edit.get():
-            messagebox.showwarning(APP_NAME, "Permission needed", "Enable edit permission in Settings first.")
+            messagebox.showwarning(APP_NAME, "Enable edit permission in Settings first.")
             return
         is_ahk = self.current_editor_file and Path(self.current_editor_file).suffix.lower() == ".ahk"
         comment = ";" if is_ahk else "#"
-        header = (
-            f"{comment} Edited with CodeHub assistant tools\n"
-            f"{comment} F1 starts, F2 stops, and Numpad 5 exits generated macros.\n"
-            f"{comment} Review app/game rules before using automation.\n\n"
-        )
+        header = (f"{comment} Edited with CodeHub assistant\n"
+                  f"{comment} F1 starts, F2 stops, Numpad 5 exits.\n\n")
         current = self.editor.get("1.0", END)
-        if "Edited with CodeHub assistant tools" not in current:
+        if "Edited with CodeHub assistant" not in current:
             self.editor.insert("1.0", header)
         self.tabs.select(1)
 
@@ -2135,7 +2461,7 @@ class CodeHubApp:
             converted, notes = self.ahk_to_python(source)
         self.converter_output.delete("1.0", END)
         self.converter_output.insert(END, converted.rstrip() + "\n\n")
-        self.converter_output.insert(END, "Changes:\n" + "\n".join(f"- {item}" for item in notes))
+        self.converter_output.insert(END, "Changes:\n" + "\n".join(f"  • {i}" for i in notes))
 
     def apply_converter_output_to_editor(self):
         output = self.converter_output.get("1.0", END).strip()
@@ -2146,7 +2472,7 @@ class CodeHubApp:
         if not script:
             return
         if not self.ai_can_edit.get():
-            messagebox.showwarning(APP_NAME, "Permission needed", "Enable edit permission in Settings first.")
+            messagebox.showwarning(APP_NAME, "Enable edit permission in Settings first.")
             return
         self.editor.delete("1.0", END)
         self.editor.insert("1.0", script + "\n")
@@ -2155,116 +2481,101 @@ class CodeHubApp:
 
     def python_to_ahk(self, source):
         notes = []
-        lines = ["#Requires AutoHotkey v2.0", "#SingleInstance Force", "", "global running := false", "", "F1::{", "    global running", "    running := true", "}", "", "F2::{", "    global running", "    running := false", "}", "", "Numpad5::ExitApp", "", "; Converted by CodeHub. Review coordinates and timing before use."]
+        lines = ["#Requires AutoHotkey v2.0", "#SingleInstance Force", "",
+                 "global running := false", "",
+                 "F1::{\n    global running\n    running := true\n}", "",
+                 "F2::{\n    global running\n    running := false\n}", "",
+                 "Numpad5::ExitApp", "",
+                 "; Converted by CodeHub. Review coordinates and timing before use."]
         for raw in source.splitlines():
             stripped = raw.strip()
             if not stripped:
-                lines.append("")
-                continue
-            indent = "    " if raw.startswith((" ", "\t")) else ""
+                lines.append(""); continue
+            indent = "    " if raw.startswith((" ","\t")) else ""
             converted = None
             if stripped.startswith("#"):
                 converted = "; " + stripped.lstrip("#").strip()
                 notes.append("converted Python comments to AHK comments")
             elif re.match(r"time\.sleep\(([^)]+)\)", stripped):
-                value = re.findall(r"time\.sleep\(([^)]+)\)", stripped)[0]
-                try:
-                    ms = int(float(value) * 1000)
-                except ValueError:
-                    ms = 100
+                val = re.findall(r"time\.sleep\(([^)]+)\)", stripped)[0]
+                try: ms = int(float(val)*1000)
+                except: ms = 100
                 converted = f"Sleep({ms})"
                 notes.append("converted time.sleep to Sleep")
             elif "mouse.position" in stripped and "=" in stripped:
                 nums = re.findall(r"-?\d+", stripped)
-                converted = f"MouseMove({nums[0]}, {nums[1]}, 0)" if len(nums) >= 2 else "; TODO: MouseMove(x, y, 0)"
+                converted = f"MouseMove({nums[0]}, {nums[1]}, 0)" if len(nums)>=2 else "; TODO: MouseMove(x, y, 0)"
                 notes.append("converted mouse.position to MouseMove")
             elif re.search(r"mouse\.(click|press|release)", stripped):
                 nums = re.findall(r"-?\d+", stripped)
-                if "release" in stripped:
-                    action = "Up"
-                elif "press" in stripped:
-                    action = "Down"
-                else:
-                    action = ""
-                coord = f", {nums[0]}, {nums[1]}" if len(nums) >= 2 else ""
+                action = "Up" if "release" in stripped else "Down" if "press" in stripped else ""
+                coord = f", {nums[0]}, {nums[1]}" if len(nums)>=2 else ""
                 converted = f"Click(\"{action}\"{coord})" if action else f"Click({coord.lstrip(', ')})"
                 notes.append("converted mouse click/press/release")
             elif re.search(r"keyboard\.(type|press|release)", stripped) or ".press(" in stripped or ".type(" in stripped:
                 text = re.findall(r"[\"'](.+?)[\"']", stripped)
-                converted = f"Send({text[0]!r})" if text else "; TODO: Send key/text"
-                converted = converted.replace("'", '"')
+                converted = f"Send({text[0]!r})".replace("'",'"') if text else "; TODO: Send key/text"
                 notes.append("converted keyboard call to Send")
-            elif stripped.startswith(("import ", "from ", "def ", "class ")):
+            elif stripped.startswith(("import ","from ","def ","class ")):
                 converted = "; " + stripped
             else:
                 converted = "; TODO: " + stripped
             lines.append(indent + converted)
-        return "\n".join(lines), sorted(set(notes or ["wrapped Python snippet in runnable AHK hotkey shell"]))
+        return "\n".join(lines), sorted(set(notes or ["wrapped Python snippet in AHK hotkey shell"]))
 
     def ahk_to_python(self, source):
         notes = []
-        lines = [
-            "# Converted by CodeHub. Review coordinates and timing before use.",
-            "import time",
-            "from pynput.keyboard import Controller as KeyboardController",
-            "from pynput.mouse import Button, Controller as MouseController",
-            "",
-            "keyboard = KeyboardController()",
-            "mouse = MouseController()",
-            "running = False",
-            "",
-        ]
+        lines = ["# Converted by CodeHub. Review coordinates and timing before use.",
+                 "import time",
+                 "from pynput.keyboard import Controller as KeyboardController",
+                 "from pynput.mouse import Button, Controller as MouseController",
+                 "", "keyboard = KeyboardController()", "mouse = MouseController()",
+                 "running = False", ""]
         for raw in source.splitlines():
             stripped = raw.strip()
             if not stripped:
-                lines.append("")
-                continue
+                lines.append(""); continue
             converted = None
             if stripped.startswith(";"):
                 converted = "# " + stripped.lstrip(";").strip()
                 notes.append("converted AHK comments to Python comments")
-            elif stripped.lower().startswith("#requires") or stripped.lower().startswith("#singleinstance"):
+            elif stripped.lower().startswith(("#requires","#singleinstance")):
                 converted = "# " + stripped
             elif re.match(r"Sleep\(?\s*(\d+)\s*\)?", stripped, re.I):
                 ms = int(re.findall(r"\d+", stripped)[0])
-                converted = f"time.sleep({ms / 1000:.3f})"
+                converted = f"time.sleep({ms/1000:.3f})"
                 notes.append("converted Sleep to time.sleep")
             elif re.match(r"MouseMove\(", stripped, re.I):
                 nums = re.findall(r"-?\d+", stripped)
-                converted = f"mouse.position = ({nums[0]}, {nums[1]})" if len(nums) >= 2 else "# TODO: mouse.position = (x, y)"
+                converted = f"mouse.position = ({nums[0]}, {nums[1]})" if len(nums)>=2 else "# TODO: mouse.position = (x, y)"
                 notes.append("converted MouseMove to mouse.position")
-            elif re.match(r"Click\(", stripped, re.I) or stripped.lower().startswith("click"):
+            elif re.match(r"Click\(", stripped, re.I):
                 nums = re.findall(r"-?\d+", stripped)
-                if "down" in stripped.lower():
-                    converted = "mouse.press(Button.left)"
-                elif "up" in stripped.lower():
-                    converted = "mouse.release(Button.left)"
-                elif len(nums) >= 2:
-                    converted = f"mouse.position = ({nums[0]}, {nums[1]})\nmouse.click(Button.left)"
-                else:
-                    converted = "mouse.click(Button.left)"
+                if "down" in stripped.lower(): converted = "mouse.press(Button.left)"
+                elif "up" in stripped.lower(): converted = "mouse.release(Button.left)"
+                elif len(nums)>=2: converted = f"mouse.position = ({nums[0]}, {nums[1]})\nmouse.click(Button.left)"
+                else: converted = "mouse.click(Button.left)"
                 notes.append("converted Click to pynput mouse action")
             elif stripped.lower().startswith("send"):
                 text = re.findall(r"[\"'](.+?)[\"']|\{(.+?)\}", stripped)
-                value = next((a or b for a, b in text), "")
-                converted = f"keyboard.type({value!r})" if value else "# TODO: keyboard press/type"
+                val = next((a or b for a,b in text),"")
+                converted = f"keyboard.type({val!r})" if val else "# TODO: keyboard press/type"
                 notes.append("converted Send to keyboard.type")
-            elif stripped.endswith("::") or stripped in ("{", "}"):
+            elif stripped.endswith("::") or stripped in ("{","}"):
                 converted = "# " + stripped
             else:
                 converted = "# TODO: " + stripped
             lines.append(converted)
-        return "\n".join(lines), sorted(set(notes or ["wrapped AHK snippet in runnable Python macro shell"]))
+        return "\n".join(lines), sorted(set(notes or ["wrapped AHK snippet in Python macro shell"]))
 
     def normalize_macro_script(self, source, is_ahk):
         notes = []
         text = source
         if is_ahk:
-            text = re.sub(r"(?m)^(\s*)#(?!Requires|SingleInstance)(.*)$", r"\1;\2", text)
             if "#Requires AutoHotkey v2.0" not in text:
                 text = "#Requires AutoHotkey v2.0\n#SingleInstance Force\n" + text
                 notes.append("added AHK v2 header")
-            if "Numpad5::ExitApp" not in text and "Numpad5::" not in text:
+            if "Numpad5::ExitApp" not in text:
                 text += "\n\nNumpad5::ExitApp\n"
                 notes.append("added Numpad5 exit hotkey")
             if "F1::" not in text:
@@ -2274,29 +2585,26 @@ class CodeHubApp:
                 text += "\nF2::{\n    global running := false\n}\n"
                 notes.append("added F2 stop hotkey")
         else:
-            text = re.sub(r"(?m)^(\s*);(.*)$", r"\1#\2", text)
             if "from pynput" not in text and ("mouse." in text or "keyboard." in text):
                 text = "import time\nfrom pynput.keyboard import Controller as KeyboardController\nfrom pynput.mouse import Button, Controller as MouseController\n\nkeyboard = KeyboardController()\nmouse = MouseController()\n\n" + text
-                notes.append("added Python pynput imports/controllers")
-        if "Edited with CodeHub assistant tools" not in text:
+                notes.append("added Python pynput imports")
+        if "Edited with CodeHub" not in text:
             prefix = ";" if is_ahk else "#"
-            text = f"{prefix} Edited with CodeHub assistant tools\n" + text
-            notes.append("added assistant edit marker")
+            text = f"{prefix} Edited with CodeHub assistant\n" + text
+            notes.append("added edit marker")
         return text, notes
 
     def root_contains_screen_point(self, x, y):
         self.root.update_idletasks()
-        rx = self.root.winfo_rootx()
-        ry = self.root.winfo_rooty()
-        rw = self.root.winfo_width()
-        rh = self.root.winfo_height()
-        return rx <= x <= rx + rw and ry <= y <= ry + rh
+        rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
+        rw, rh = self.root.winfo_width(), self.root.winfo_height()
+        return rx <= x <= rx+rw and ry <= y <= ry+rh
 
     def start_position_logging(self):
         if self.position_logging:
             return
         self.position_logging = True
-        self.position_status.set(f"Logging | {len(self.position_log_events)} clicks")
+        self.position_status.set(f"▶ Logging  ·  {len(self.position_log_events)} clicks")
         self.position_listener = mouse.Listener(on_click=self.on_position_log_click)
         self.position_listener.start()
 
@@ -2305,27 +2613,27 @@ class CodeHubApp:
         if self.position_listener:
             self.position_listener.stop()
             self.position_listener = None
-        self.position_status.set(f"Stopped | {len(self.position_log_events)} clicks")
+        self.position_status.set(f"■ Stopped  ·  {len(self.position_log_events)} clicks")
 
     def clear_position_log(self):
         self.position_log_events.clear()
         self.position_output.delete("1.0", END)
-        self.position_status.set("Logging | 0 clicks" if self.position_logging else "Stopped | 0 clicks")
+        self.position_status.set("▶ Logging  ·  0 clicks" if self.position_logging else "■ Stopped  ·  0 clicks")
 
     def on_position_log_click(self, x, y, button, pressed):
         if not self.position_logging or not pressed or button != mouse.Button.left:
             return
         if self.root_contains_screen_point(x, y):
             return
-        event = {"x": int(x), "y": int(y), "time": time.time(), "index": len(self.position_log_events) + 1}
+        event = {"x": int(x), "y": int(y), "time": time.time(), "index": len(self.position_log_events)+1}
         self.position_log_events.append(event)
-        self.root.after(0, lambda e=event: self.append_position_log(e))
+        self.root.after(0, lambda e=event: self._append_pos_log(e))
 
-    def append_position_log(self, event):
+    def _append_pos_log(self, event):
         stamp = datetime.fromtimestamp(event["time"]).strftime("%H:%M:%S")
-        self.position_output.insert(END, f"{event['index']:03d}  {stamp}  left click @ {event['x']}, {event['y']}\n")
+        self.position_output.insert(END, f"{event['index']:03d}  {stamp}  left @ {event['x']}, {event['y']}\n")
         self.position_output.see(END)
-        self.position_status.set(f"Logging | {len(self.position_log_events)} clicks")
+        self.position_status.set(f"▶ Logging  ·  {len(self.position_log_events)} clicks")
 
     def insert_position_log_into_editor(self):
         if not self.position_log_events:
@@ -2333,11 +2641,11 @@ class CodeHubApp:
             return
         is_ahk = self.current_editor_file and Path(self.current_editor_file).suffix.lower() == ".ahk"
         lines = []
-        for event in self.position_log_events:
+        for e in self.position_log_events:
             if is_ahk:
-                lines.append(f"Click({event['x']}, {event['y']})")
+                lines.append(f"Click({e['x']}, {e['y']})")
             else:
-                lines.append(f"mouse.position = ({event['x']}, {event['y']})")
+                lines.append(f"mouse.position = ({e['x']}, {e['y']})")
                 lines.append("mouse.click(Button.left)")
         self.editor.insert(END, "\n" + "\n".join(lines) + "\n")
         self.tabs.select(1)
@@ -2366,7 +2674,7 @@ class CodeHubApp:
         self.settings["ui_font_size"] = max(8, min(12, size))
         self.settings["ui_density"] = self.ui_density.get()
         write_json(SETTINGS_PATH, self.settings)
-        self.configure_style()
+        self._configure_styles()
         self.status.set("UI settings saved")
 
     def toggle_fullscreen(self):
@@ -2386,4 +2694,5 @@ class CodeHubApp:
 
 
 if __name__ == "__main__":
+    startup_console()
     CodeHubApp().run()

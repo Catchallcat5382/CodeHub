@@ -15,7 +15,7 @@ python -m PyInstaller `
     --noconfirm `
     --clean `
     --onefile `
-    --windowed `
+    --console `
     --name CodeHub `
     --icon $Icon `
     --add-data "$LogoAssets;assets" `
