@@ -76,6 +76,22 @@ def build_version(build_number=None):
         return f"V{major}"
     return f"V{major}.{minor}"
 
+def get_live_build_number():
+    try:
+        with urllib.request.urlopen(
+            f"https://api.github.com/repos/{GITHUB_REPO}/commits?per_page=1",
+            timeout=4
+        ) as response:
+            link = response.headers.get("Link", "")
+
+        match = re.search(r"[?&]page=(\d+)>; rel=\"last\"", link)
+        if match:
+            return int(match.group(1))
+    except Exception:
+        pass
+
+    return BUILD_NUMBER
+
 if getattr(sys, "frozen", False):
     APP_ROOT = Path(sys.executable).resolve().parent
     if APP_ROOT.name == ".codehub_runtime":
@@ -199,7 +215,7 @@ def startup_console():
         time.sleep(0.025)
 
     print("[NOTE] Do NOT close this console while using CodeHub. It will close both applications.", flush=True)
-    print("[VERSION] " + build_version(), flush=True)
+    print("[VERSION] " + build_version(get_live_build_number()), flush=True)
     time.sleep(0.5)
 
 
@@ -3114,13 +3130,55 @@ root.mainloop()
             messagebox.showerror(APP_NAME, "Could not find AppUpdater.bat.")
             return
 
+        app_dir = updater.parent
+        exe_path = app_dir / "CodeHub.exe"
+        cmd_path = app_dir / "CodeHub_local_update.cmd"
+        current_pid = os.getpid()
+
+        script = f"""@echo off
+    setlocal EnableExtensions
+    color 0A
+    title CodeHub Local Updater
+    cd /d "{app_dir}"
+
+    echo [CodeHub] waiting for app to close...
+    :WAIT_APP
+    tasklist /FI "PID eq {current_pid}" | find "{current_pid}" >nul
+    if not errorlevel 1 (
+        timeout /t 1 /nobreak >nul
+        goto WAIT_APP
+    )
+
+    echo [CodeHub] running local updater...
+    call "{updater}"
+    if errorlevel 1 (
+        echo [CodeHub] local update failed.
+        pause
+        exit /b 1
+    )
+
+    echo [CodeHub] restarting CodeHub...
+    if exist "{exe_path}" (
+        start "" /D "{app_dir}" "{exe_path.name}"
+    ) else (
+        echo [CodeHub] CodeHub.exe not found after update.
+        pause
+        exit /b 1
+    )
+
+    echo [CodeHub] updated and closing...
+    timeout /t 1 /nobreak >nul
+    exit
+    """
+
+        cmd_path.write_text(script, encoding="utf-8")
+
         subprocess.Popen(
-            ["cmd.exe", "/c", str(updater)],
-            cwd=str(updater.parent),
+            ["cmd.exe", "/c", "call", str(cmd_path)],
+            cwd=str(app_dir),
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
         )
 
-        self.status.set("Local updater launched")
         self.root.after(150, self.close)
 
     def save_ui_settings(self):
