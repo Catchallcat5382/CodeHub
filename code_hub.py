@@ -112,6 +112,24 @@ EXPORT_DIR = USER_ROOT / "exports"
 SETTINGS_PATH = DATA_DIR / "settings.json"
 RECORDINGS_PATH = DATA_DIR / "recordings.json"
 KNOWLEDGE_PATH = DATA_DIR / "knowledge.json"
+UPDATE_MARKER_PATH = DATA_DIR / "installed_commit.txt"
+
+
+def saved_update_sha(settings=None):
+    sha = current_update_sha()
+    if sha:
+        return sha
+    if settings:
+        sha = str(settings.get("last_update_sha", "") or "").strip()
+        if sha:
+            return sha
+    try:
+        sha = UPDATE_MARKER_PATH.read_text(encoding="utf-8", errors="replace").strip()
+        if sha:
+            return sha
+    except Exception:
+        pass
+    return ""
 
 DEFAULT_SETTINGS = {
     "export_dir": str(EXPORT_DIR),
@@ -5881,11 +5899,17 @@ root.mainloop()
                 except Exception:
                     latest_tag = build_version(BUILD_NUMBER)
                 asset_url = GITHUB_MAIN_EXE_URL
-                current_sha = current_update_sha() or str(self.settings.get("last_update_sha", "") or "").strip()
-                if not current_sha and str(latest_tag or "").strip() == build_version(BUILD_NUMBER):
+                current_sha = saved_update_sha(self.settings)
+                installed_version = build_version(BUILD_NUMBER)
+                release_matches_installed = str(latest_tag or "").strip() == installed_version
+                if release_matches_installed and current_update_sha() == "":
                     self.settings["last_update_sha"] = latest_sha
                     self.settings["last_update_tag"] = latest_tag
                     write_json(SETTINGS_PATH, self.settings)
+                    try:
+                        UPDATE_MARKER_PATH.write_text(latest_sha, encoding="utf-8")
+                    except Exception:
+                        pass
                     current_sha = latest_sha
                 has_update = bool(latest_sha and latest_sha != current_sha)
                 self.root.after(0, lambda: self.finish_update_check(latest_sha, has_update, auto, asset_url, latest_tag))
@@ -5902,15 +5926,12 @@ root.mainloop()
         if not has_update:
             self.status.set(f"Already up to date    {version_label}    {short_sha}")
             if not auto:
-                reinstall = messagebox.askyesno(
+                messagebox.showinfo(
                     APP_NAME,
                     "CodeHub is already up to date.\n\n"
                     f"Version: {version_label}\n"
-                    f"Commit: {short_sha}\n\n"
-                    "Reinstall/reapply the latest build anyway?",
+                    f"Commit: {short_sha}",
                 )
-                if reinstall:
-                    self.download_and_apply_update(latest_sha, asset_url or GITHUB_MAIN_EXE_URL, latest_tag=version_label)
             return
         if auto and not getattr(sys, "frozen", False):
             self.status.set(f"Source update available    {version_label}    {short_sha}")
@@ -5951,6 +5972,7 @@ root.mainloop()
         latest_sha = str(latest_sha or "").strip()
         latest_tag = str(latest_tag or "")
         settings_path = SETTINGS_PATH
+        marker_path = UPDATE_MARKER_PATH
 
         script = textwrap.dedent(f"""\
     @echo off
@@ -5965,6 +5987,7 @@ root.mainloop()
     set "EXE={exe_path}"
     set "APPDIR={app_dir}"
     set "SETTINGS={settings_path}"
+    set "MARKER={marker_path}"
     set "LATEST_SHA={latest_sha}"
     set "LATEST_TAG={latest_tag}"
 
@@ -6035,6 +6058,9 @@ root.mainloop()
     )
 
     echo [CodeHub] saving installed commit marker...
+    if not exist "%~dp0" echo [CodeHub] app folder missing>>"%LOG%"
+    for %%D in ("%MARKER%") do if not exist "%%~dpD" mkdir "%%~dpD" >nul 2>&1
+    >"%MARKER%" echo %LATEST_SHA%
     powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$settings='%SETTINGS%'; $dir=Split-Path -Parent $settings; if (!(Test-Path -LiteralPath $dir)) {{ New-Item -ItemType Directory -Path $dir -Force | Out-Null }}; if (Test-Path -LiteralPath $settings) {{ $json=Get-Content -LiteralPath $settings -Raw | ConvertFrom-Json }} else {{ $json=[pscustomobject]@{{}} }}; $json | Add-Member -NotePropertyName last_update_sha -NotePropertyValue '%LATEST_SHA%' -Force; $json | Add-Member -NotePropertyName last_update_tag -NotePropertyValue '%LATEST_TAG%' -Force; $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settings -Encoding UTF8" >>"%LOG%" 2>&1
 
     echo [CodeHub] creating desktop shortcut...
