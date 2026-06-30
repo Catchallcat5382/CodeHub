@@ -5894,15 +5894,10 @@ root.mainloop()
         def worker():
             try:
                 latest_sha = self.latest_github_sha()
-                try:
-                    latest_tag, _release_asset_url = self.latest_github_release()
-                except Exception:
-                    latest_tag = build_version(BUILD_NUMBER)
+                latest_tag = build_version(BUILD_NUMBER)
                 asset_url = GITHUB_MAIN_EXE_URL
                 current_sha = saved_update_sha(self.settings)
-                installed_version = build_version(BUILD_NUMBER)
-                release_matches_installed = str(latest_tag or "").strip() == installed_version
-                if release_matches_installed and current_update_sha() == "":
+                if not current_sha:
                     self.settings["last_update_sha"] = latest_sha
                     self.settings["last_update_tag"] = latest_tag
                     write_json(SETTINGS_PATH, self.settings)
@@ -5971,7 +5966,6 @@ root.mainloop()
         asset_url = asset_url or GITHUB_MAIN_EXE_URL
         latest_sha = str(latest_sha or "").strip()
         latest_tag = str(latest_tag or "")
-        settings_path = SETTINGS_PATH
         marker_path = UPDATE_MARKER_PATH
 
         script = textwrap.dedent(f"""\
@@ -5986,7 +5980,6 @@ root.mainloop()
     set "TMP={tmp_exe}"
     set "EXE={exe_path}"
     set "APPDIR={app_dir}"
-    set "SETTINGS={settings_path}"
     set "MARKER={marker_path}"
     set "LATEST_SHA={latest_sha}"
     set "LATEST_TAG={latest_tag}"
@@ -6058,13 +6051,8 @@ root.mainloop()
     )
 
     echo [CodeHub] saving installed commit marker...
-    if not exist "%~dp0" echo [CodeHub] app folder missing>>"%LOG%"
     for %%D in ("%MARKER%") do if not exist "%%~dpD" mkdir "%%~dpD" >nul 2>&1
     >"%MARKER%" echo %LATEST_SHA%
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$settings='%SETTINGS%'; $dir=Split-Path -Parent $settings; if (!(Test-Path -LiteralPath $dir)) {{ New-Item -ItemType Directory -Path $dir -Force | Out-Null }}; if (Test-Path -LiteralPath $settings) {{ $json=Get-Content -LiteralPath $settings -Raw | ConvertFrom-Json }} else {{ $json=[pscustomobject]@{{}} }}; $json | Add-Member -NotePropertyName last_update_sha -NotePropertyValue '%LATEST_SHA%' -Force; $json | Add-Member -NotePropertyName last_update_tag -NotePropertyValue '%LATEST_TAG%' -Force; $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settings -Encoding UTF8" >>"%LOG%" 2>&1
-
-    echo [CodeHub] creating desktop shortcut...
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$desktop=[Environment]::GetFolderPath('Desktop'); $lnk=Join-Path $desktop 'CodeHub.lnk'; $shell=New-Object -ComObject WScript.Shell; $s=$shell.CreateShortcut($lnk); $s.TargetPath='%EXE%'; $s.WorkingDirectory='%APPDIR%'; $s.IconLocation='%EXE%,0'; $s.Save()" >>"%LOG%" 2>&1
 
     echo [CodeHub] restarting CodeHub...
     start "" /D "%APPDIR%" "%EXE%"
