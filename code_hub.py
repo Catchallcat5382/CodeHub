@@ -5940,7 +5940,6 @@ root.mainloop()
         app_dir = exe_path.parent
         tmp_exe = app_dir / "CodeHub_update_tmp.exe"
         cmd_path = app_dir / "CodeHub_apply_update.cmd"
-        ps1_path = app_dir / "CodeHub_apply_update.ps1"
         current_pid = os.getpid()
 
         asset_url = asset_url or GITHUB_EXE_URL
@@ -5948,105 +5947,102 @@ root.mainloop()
         latest_tag = str(latest_tag or "")
         settings_path = SETTINGS_PATH
 
-        ps_script = textwrap.dedent(f"""\
-    $ErrorActionPreference = 'Stop'
-    $Host.UI.RawUI.WindowTitle = 'CodeHub Update'
-    $logFile = Join-Path "{app_dir}" "CodeHub_update_log.txt"
-    try {{ Start-Transcript -Path $logFile -Append | Out-Null }} catch {{ }}
-    function Say($m) {{ Write-Host "[CodeHub] $m" -ForegroundColor Green }}
-    function Fail($m) {{ Write-Host "[CodeHub] ERROR: $m" -ForegroundColor Red; Write-Host "[CodeHub] Log: $logFile" -ForegroundColor Yellow; try {{ Stop-Transcript | Out-Null }} catch {{ }}; Read-Host 'Press Enter to close'; exit 1 }}
-
-    Set-Location -LiteralPath "{app_dir}"
-    Say "downloading latest commit build..."
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    try {{
-        Invoke-WebRequest -Uri "{asset_url}" -OutFile "{tmp_exe}" -UseBasicParsing -Headers @{{'User-Agent'='CodeHub-Updater'}}
-    }} catch {{
-        Say "PowerShell download failed: $($_.Exception.Message)"
-        Say "trying curl.exe fallback..."
-        & curl.exe -L --fail -A "CodeHub-Updater" -o "{tmp_exe}" "{asset_url}"
-        if ($LASTEXITCODE -ne 0) {{ Fail "curl.exe download failed with code $LASTEXITCODE" }}
-    }}
-    if (!(Test-Path -LiteralPath "{tmp_exe}")) {{ Fail "download did not create a file" }}
-    $size = (Get-Item -LiteralPath "{tmp_exe}").Length
-    if ($size -lt 1048576) {{ Fail "downloaded file is too small ($size bytes), refusing to replace the app" }}
-    Say "downloaded $size bytes"
-
-    Say "waiting for old CodeHub process to close..."
-    while (Get-Process -Id {current_pid} -ErrorAction SilentlyContinue) {{
-        Start-Sleep -Milliseconds 500
-    }}
-
-    Say "replacing executable with retry loop..."
-    $copied = $false
-    for ($i = 1; $i -le 20; $i++) {{
-        try {{
-            Copy-Item -LiteralPath "{tmp_exe}" -Destination "{exe_path}" -Force
-            $copied = $true
-            break
-        }} catch {{
-            Say "replace attempt $i failed, retrying..."
-            Start-Sleep -Milliseconds 700
-        }}
-    }}
-    if (!$copied) {{ Fail "could not replace CodeHub.exe" }}
-
-    Say "creating desktop shortcut..."
-    try {{
-        $desktop = [Environment]::GetFolderPath('Desktop')
-        $shortcutPath = Join-Path $desktop 'CodeHub.lnk'
-        $shell = New-Object -ComObject WScript.Shell
-        $shortcut = $shell.CreateShortcut($shortcutPath)
-        $shortcut.TargetPath = "{exe_path}"
-        $shortcut.WorkingDirectory = "{app_dir}"
-        $shortcut.IconLocation = "{exe_path},0"
-        $shortcut.Save()
-    }} catch {{
-        Say "shortcut creation failed"
-    }}
-
-    Say "restarting CodeHub..."
-    $newProc = Start-Process -FilePath "{exe_path}" -WorkingDirectory "{app_dir}" -PassThru
-    Start-Sleep -Seconds 2
-    if ($newProc.HasExited) {{ Fail "CodeHub relaunched but immediately exited with code $($newProc.ExitCode)" }}
-    Say "relaunch verified with PID $($newProc.Id)"
-    Say "saving installed commit marker..."
-    $settingsFile = "{settings_path}"
-    try {{
-        $dir = Split-Path -Parent $settingsFile
-        if (!(Test-Path -LiteralPath $dir)) {{ New-Item -ItemType Directory -Path $dir -Force | Out-Null }}
-        if (Test-Path -LiteralPath $settingsFile) {{
-            $json = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
-        }} else {{
-            $json = [pscustomobject]@{{}}
-        }}
-        $json | Add-Member -NotePropertyName last_update_sha -NotePropertyValue "{latest_sha}" -Force
-        $json | Add-Member -NotePropertyName last_update_tag -NotePropertyValue "{latest_tag}" -Force
-        $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settingsFile -Encoding UTF8
-    }} catch {{
-        Say "could not save settings marker, but the exe was replaced and relaunched"
-    }}
-    Remove-Item -LiteralPath "{tmp_exe}" -Force -ErrorAction SilentlyContinue
-    Say "updated successfully, closing updater..."
-    try {{ Stop-Transcript | Out-Null }} catch {{ }}
-    Start-Sleep -Seconds 1
-    exit 0
-    """)
-        ps1_path.write_text(ps_script, encoding="utf-8")
-
         script = textwrap.dedent(f"""\
     @echo off
     setlocal EnableExtensions
     color 0A
     title CodeHub Update
     cd /d "{app_dir}"
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{ps1_path}"
+
+    set "LOG={app_dir}\\CodeHub_update_log.txt"
+    set "URL={asset_url}"
+    set "TMP={tmp_exe}"
+    set "EXE={exe_path}"
+    set "APPDIR={app_dir}"
+    set "SETTINGS={settings_path}"
+    set "LATEST_SHA={latest_sha}"
+    set "LATEST_TAG={latest_tag}"
+
+    echo ================================================================>>"%LOG%"
+    echo CodeHub update started %date% %time%>>"%LOG%"
+    echo URL: %URL%>>"%LOG%"
+    echo EXE: %EXE%>>"%LOG%"
+    echo.
+    echo [CodeHub] downloading latest commit build...
+
+    if exist "%TMP%" del /f /q "%TMP%" >nul 2>&1
+    curl.exe -L --fail -A "CodeHub-Updater" -o "%TMP%" "%URL%" >>"%LOG%" 2>&1
     if errorlevel 1 (
-        echo.
-        echo [CodeHub] updater failed. The error is above.
+        echo [CodeHub] curl download failed. Trying Windows download fallback...
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%URL%' -OutFile '%TMP%' -UseBasicParsing -Headers @{{'User-Agent'='CodeHub-Updater'}}" >>"%LOG%" 2>&1
+        if errorlevel 1 (
+            echo [CodeHub] download failed. Log: %LOG%
+            pause
+            exit /b 1
+        )
+    )
+
+    if not exist "%TMP%" (
+        echo [CodeHub] download did not create a file. Log: %LOG%
         pause
         exit /b 1
     )
+
+    for %%A in ("%TMP%") do set "SIZE=%%~zA"
+    echo [CodeHub] downloaded %SIZE% bytes
+    echo Downloaded bytes: %SIZE%>>"%LOG%"
+    if not defined SIZE (
+        echo [CodeHub] could not read downloaded file size. Log: %LOG%
+        pause
+        exit /b 1
+    )
+    if %SIZE% LSS 1048576 (
+        echo [CodeHub] downloaded file is too small, refusing to replace the app. Log: %LOG%
+        pause
+        exit /b 1
+    )
+
+    echo [CodeHub] waiting for old CodeHub process to close...
+    :WAIT_CODEHUB_CLOSE
+    tasklist /FI "PID eq {current_pid}" | find "{current_pid}" >nul
+    if not errorlevel 1 (
+        timeout /t 1 /nobreak >nul
+        goto WAIT_CODEHUB_CLOSE
+    )
+
+    echo [CodeHub] replacing executable...
+    set "COPIED=0"
+    for /L %%I in (1,1,20) do (
+        copy /y "%TMP%" "%EXE%" >>"%LOG%" 2>&1
+        if not errorlevel 1 (
+            set "COPIED=1"
+            goto COPY_DONE
+        )
+        echo [CodeHub] replace attempt %%I failed, retrying...
+        timeout /t 1 /nobreak >nul
+    )
+
+    :COPY_DONE
+    if not "%COPIED%"=="1" (
+        echo [CodeHub] could not replace CodeHub.exe. Log: %LOG%
+        pause
+        exit /b 1
+    )
+
+    echo [CodeHub] saving installed commit marker...
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$settings='%SETTINGS%'; $dir=Split-Path -Parent $settings; if (!(Test-Path -LiteralPath $dir)) {{ New-Item -ItemType Directory -Path $dir -Force | Out-Null }}; if (Test-Path -LiteralPath $settings) {{ $json=Get-Content -LiteralPath $settings -Raw | ConvertFrom-Json }} else {{ $json=[pscustomobject]@{{}} }}; $json | Add-Member -NotePropertyName last_update_sha -NotePropertyValue '%LATEST_SHA%' -Force; $json | Add-Member -NotePropertyName last_update_tag -NotePropertyValue '%LATEST_TAG%' -Force; $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settings -Encoding UTF8" >>"%LOG%" 2>&1
+
+    echo [CodeHub] creating desktop shortcut...
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$desktop=[Environment]::GetFolderPath('Desktop'); $lnk=Join-Path $desktop 'CodeHub.lnk'; $shell=New-Object -ComObject WScript.Shell; $s=$shell.CreateShortcut($lnk); $s.TargetPath='%EXE%'; $s.WorkingDirectory='%APPDIR%'; $s.IconLocation='%EXE%,0'; $s.Save()" >>"%LOG%" 2>&1
+
+    echo [CodeHub] restarting CodeHub...
+    start "" /D "%APPDIR%" "%EXE%"
+    timeout /t 2 /nobreak >nul
+    del /f /q "%TMP%" >nul 2>&1
+
+    echo [CodeHub] updated successfully. Closing updater...
+    echo CodeHub update finished %date% %time%>>"%LOG%"
+    timeout /t 1 /nobreak >nul
     exit /b 0
     """)
 
