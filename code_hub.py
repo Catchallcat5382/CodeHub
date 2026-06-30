@@ -1,4 +1,5 @@
 ﻿import json
+import math
 import os
 import re
 import shutil
@@ -16,7 +17,7 @@ from tkinter import (
     BOTH, END, HORIZONTAL, LEFT, RIGHT, X, Y, BooleanVar, DoubleVar,
     PhotoImage, StringVar, Tk, Toplevel, Canvas, Frame
 )
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, colorchooser
 from tkinter.scrolledtext import ScrolledText
 from tkinter import ttk
 
@@ -60,8 +61,9 @@ GITHUB_REPO = "Catchallcat5382/CodeHub"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
 GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/raw/main/CodeHub.exe"
 BUILD_COMMIT = "local-build"
-BUILD_NUMBER = 19
-MAX_REPLAY_FPS = 1000
+BUILD_NUMBER = 20
+MAX_REPLAY_FPS = 30
+REPLAY_FPS_CHOICES = ["15", "20", "24", "30"]
 
 
 def build_version(build_number=None):
@@ -116,6 +118,9 @@ KNOWLEDGE_PATH = DATA_DIR / "knowledge.json"
 DEFAULT_SETTINGS = {
     "export_dir": str(EXPORT_DIR),
     "default_script_name": "MyMacro",
+    "ahk_version": "2",
+    "ahk_path_v1": "",
+    "ahk_path_v2": "",
     "watermark_corner": "top_right",
     "watermark_opacity": 0.46,
     "ocr_region": {"x": 0, "y": 0, "width": 420, "height": 160},
@@ -124,9 +129,16 @@ DEFAULT_SETTINGS = {
     "ai_can_run": False,
     "ui_font_size": 9,
     "ui_density": "compact",
+    "theme_mode": "computer_auto",
+    "custom_bg": "#050505",
+    "custom_panel": "#0b0b0b",
+    "custom_text": "#e8f0f8",
+    "custom_accent": "#57a6ff",
     "record_screenshots": True,
-    "review_capture_fps": 60,
-    "review_capture_interval_ms": 1000 // 60,
+    "review_capture_fps": 10,
+    "review_capture_interval_ms": 100,
+    "record_replay_video": False,
+    "builder_background_image": "",
     "auto_update": False,
     "last_update_sha": "",
 }
@@ -152,6 +164,78 @@ DEFAULT_KNOWLEDGE = {
 }
 
 
+def clamp_hex_color(value, fallback="#57a6ff"):
+    value = str(value or "").strip()
+    if not value.startswith("#"):
+        value = "#" + value
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+        return value.upper()
+    return fallback
+
+
+def hex_to_rgb(hex_color):
+    hex_color = clamp_hex_color(hex_color).lstrip("#")
+    return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def mix_hex(a, b, amount):
+    ar, ag, ab = hex_to_rgb(a)
+    br, bg, bb = hex_to_rgb(b)
+    amount = max(0.0, min(1.0, float(amount)))
+    return "#{:02X}{:02X}{:02X}".format(
+        int(ar + (br - ar) * amount),
+        int(ag + (bg - ag) * amount),
+        int(ab + (bb - ab) * amount),
+    )
+
+
+def detect_windows_dark_mode():
+    if sys.platform != "win32":
+        return True
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        )
+        value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+        return int(value) == 0
+    except Exception:
+        return True
+
+
+def apply_theme_to_palette(settings):
+    mode = str(settings.get("theme_mode", "computer_auto") or "computer_auto").lower()
+    if mode == "computer_auto":
+        mode = "dark" if detect_windows_dark_mode() else "light"
+
+    if mode == "light":
+        base = {
+            "bg": "#F5F7FB", "bg2": "#EEF2F7", "panel": "#E8EDF5", "panel2": "#FFFFFF",
+            "border": "#CBD5E1", "border2": "#94A3B8", "text": "#111827", "text2": "#475569",
+            "text3": "#94A3B8", "accent": "#2563EB", "accent2": "#1D4ED8", "selection": "#DBEAFE", "hl": "#F8FAFC",
+        }
+    elif mode == "custom":
+        bg = clamp_hex_color(settings.get("custom_bg", "#050505"), "#050505")
+        panel = clamp_hex_color(settings.get("custom_panel", "#0B0B0B"), "#0B0B0B")
+        text = clamp_hex_color(settings.get("custom_text", "#E8F0F8"), "#E8F0F8")
+        accent = clamp_hex_color(settings.get("custom_accent", "#57A6FF"), "#57A6FF")
+        base = {
+            "bg": bg, "bg2": mix_hex(bg, "#000000", 0.15), "panel": panel, "panel2": mix_hex(panel, "#FFFFFF", 0.04),
+            "border": mix_hex(panel, text, 0.25), "border2": mix_hex(panel, text, 0.35), "text": text,
+            "text2": mix_hex(text, bg, 0.35), "text3": mix_hex(text, bg, 0.58), "accent": accent,
+            "accent2": mix_hex(accent, "#000000", 0.28), "selection": mix_hex(accent, bg, 0.72), "hl": mix_hex(panel, text, 0.08),
+        }
+    else:
+        base = {
+            "bg": "#050505", "bg2": "#080808", "panel": "#0b0b0b", "panel2": "#101010",
+            "border": "#2a2a2a", "border2": "#3a3a3a", "text": "#e8f0f8", "text2": "#7a98b8",
+            "text3": "#3a5060", "accent": "#57a6ff", "accent2": "#155ecf", "selection": "#14263a", "hl": "#111111",
+        }
+    C.update(base)
+
+
+
 def migrate_legacy_data():
     if not getattr(sys, "frozen", False):
         return
@@ -175,6 +259,15 @@ def ensure_files():
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     if not SETTINGS_PATH.exists():
         write_json(SETTINGS_PATH, DEFAULT_SETTINGS)
+    else:
+        existing_settings = read_json(SETTINGS_PATH, {})
+        changed = False
+        for key, value in DEFAULT_SETTINGS.items():
+            if key not in existing_settings:
+                existing_settings[key] = value
+                changed = True
+        if changed:
+            write_json(SETTINGS_PATH, existing_settings)
     if not RECORDINGS_PATH.exists():
         write_json(RECORDINGS_PATH, {"recordings": []})
     if not KNOWLEDGE_PATH.exists():
@@ -191,53 +284,75 @@ def set_windows_app_id():
         pass
 
 
-def hide_console_if_present():
-    if sys.platform != "win32":
-        return
+
+
+def clear():
+    """Clear the visible diagnostics console safely."""
     try:
-        import ctypes
-        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-        if hwnd:
-            ctypes.windll.user32.ShowWindow(hwnd, 0)
-        ctypes.windll.kernel32.FreeConsole()
+        os.system("cls" if os.name == "nt" else "clear")
     except Exception:
+        # Never let a console-clear failure crash CodeHub.
         pass
+
+
+def hide_console_if_present():
+    # Keep the loader/diagnostic console open on purpose.
+    # User requested visible asset errors for sounds/cursor.
+    return
 
 
 def startup_console():
-    if sys.platform != "win32" or not getattr(sys, "frozen", False):
-        return
-    try:
-        os.system("color 0A")
-        os.system(f"title {APP_NAME} Loader")
-    except Exception:
-        pass
+    """Keep a visible diagnostics console open and print useful asset info."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            if not kernel32.GetConsoleWindow():
+                kernel32.AllocConsole()
+            try:
+                sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+                sys.stderr = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+                sys.stdin = open("CONIN$", "r", encoding="utf-8")
+            except Exception:
+                pass
+            os.system("color 0A")
+            os.system(f"title {APP_NAME} Diagnostics")
+        except Exception:
+            pass
+    else:
+        try:
+            os.system(f"title {APP_NAME} Diagnostics")
+        except Exception:
+            pass
+
+    clear()
+    print("=" * 78, flush=True)
+    print("                    CODEHUB SYSTEM BOOTSTRAP / DIAGNOSTICS", flush=True)
+    print("=" * 78, flush=True)
+    print(f"[APP ] {APP_NAME}", flush=True)
+    print(f"[VER ] {build_version(get_live_build_number())}", flush=True)
+    print(f"[PY  ] {sys.version.split()[0]}  exe={sys.executable}", flush=True)
+    print(f"[ROOT] APP_ROOT    = {APP_ROOT}", flush=True)
+    print(f"[ROOT] BUNDLE_ROOT = {BUNDLE_ROOT}", flush=True)
+    print(f"[ROOT] ASSET_DIR   = {ASSET_DIR}", flush=True)
+    print(f"[ROOT] DATA_DIR    = {DATA_DIR}", flush=True)
+    print("[NOTE] This console stays open for diagnostics.", flush=True)
+    print("-" * 78, flush=True)
 
     lines = [
-        "[BOOT] CodeHub package loader",
-        "[PY] unpacking embedded Python runtime and Tk UI packages",
-        "[PY] loading pynput, pillow, mss, psutil, requests",
-        "[CACHE] preparing LocalAppData JSON cache",
-        "[GIT] public update channel armed",
-        "[PACK] mounting embedded assets and compiled source",
-        "[UI] waiting for every package before showing CodeHub",
-        "[SAFE] paths, names, and IPs are redacted in loader output",
-        "[READY] package load complete; opening interface",
+        "[BOOT] mounting CodeHub runtime",
+        "[ASSET] mounting embedded assets",
+        "[UI] waiting for splash before showing main interface",
+        "[READY] startup diagnostics armed",
     ]
-
     total = len(lines)
-    for i, line in enumerate(lines, 1):
-        print(line, flush=True)
-        width = 28
+    for i, msg in enumerate(lines, 1):
+        width = 30
         done = int(width * i / total)
         bar = "#" * done + "-" * (width - done)
-        print(f"[LOAD] [{bar}] {int(i * 100 / total):3d}% packages ready", flush=True)
-        time.sleep(0.025)
-
-    print("[NOTE] Do NOT close this console; it will close the application.", flush=True)
-    print("[VERSION] " + build_version(get_live_build_number()), flush=True)
-    time.sleep(0.5)
-
+        print(f"{msg}\n[LOAD] [{bar}] {int(i * 100 / total):3d}%", flush=True)
+        time.sleep(0.015)
+    print("-" * 78, flush=True)
 
 def read_json(path, fallback):
     try:
@@ -309,23 +424,135 @@ def hidden_process_flags():
     return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
-def find_ahk_exe():
+def _ahk_version_from_output(output):
+    text = str(output or "").lower()
+    if "v2" in text or "version 2" in text:
+        return "2"
+    if "v1" in text or "version 1" in text or "1.1" in text:
+        return "1"
+    return ""
+
+
+def detect_ahk_version(path):
+    path = str(path or "").strip()
+    if not path:
+        return ""
+    try:
+        result = subprocess.run([path, "/ErrorStdOut", "*"], input="MsgBox % A_AhkVersion`n", capture_output=True, text=True, timeout=2, creationflags=hidden_process_flags())
+        version_text = (result.stdout or "") + (result.stderr or "")
+        if "1." in version_text:
+            return "1"
+        if "v2" in version_text.lower() or "requires" in version_text.lower():
+            return "2"
+    except Exception:
+        pass
+    name = Path(path).name.lower()
+    full = str(path).lower()
+    if "v2" in full or "autohotkey64.exe" in name:
+        return "2"
+    if "v1" in full or "autohotkeyu" in name:
+        return "1"
+    return ""
+
+
+def find_ahk_exe(version=None, custom_path=None):
+    version = str(version or "").strip()
     candidates = []
-    for name in ("AutoHotkey64.exe", "AutoHotkey.exe", "AutoHotkeyU64.exe"):
+
+    if custom_path:
+        candidates.append(Path(custom_path))
+
+    if version == "2":
+        names = ("AutoHotkey64.exe", "AutoHotkey.exe", "AutoHotkeyUX.exe")
+        candidates.extend([
+            Path("C:/Program Files/AutoHotkey/v2/AutoHotkey64.exe"),
+            Path("C:/Program Files/AutoHotkey/v2/AutoHotkey.exe"),
+            Path("C:/Program Files/AutoHotkey/AutoHotkey64.exe"),
+            Path("C:/Program Files/AutoHotkey/AutoHotkey.exe"),
+        ])
+    elif version == "1":
+        names = ("AutoHotkeyU64.exe", "AutoHotkeyU32.exe", "AutoHotkeyA32.exe", "AutoHotkey.exe")
+        candidates.extend([
+            Path("C:/Program Files/AutoHotkey/v1.1/AutoHotkeyU64.exe"),
+            Path("C:/Program Files/AutoHotkey/v1.1/AutoHotkey.exe"),
+            Path("C:/Program Files/AutoHotkey/AutoHotkeyU64.exe"),
+            Path("C:/Program Files (x86)/AutoHotkey/AutoHotkey.exe"),
+        ])
+    else:
+        names = ("AutoHotkey64.exe", "AutoHotkey.exe", "AutoHotkeyU64.exe", "AutoHotkeyU32.exe")
+        candidates.extend([
+            Path("C:/Program Files/AutoHotkey/v2/AutoHotkey64.exe"),
+            Path("C:/Program Files/AutoHotkey/v2/AutoHotkey.exe"),
+            Path("C:/Program Files/AutoHotkey/v1.1/AutoHotkeyU64.exe"),
+            Path("C:/Program Files/AutoHotkey/AutoHotkey.exe"),
+            Path("C:/Program Files/AutoHotkey/AutoHotkey64.exe"),
+            Path("C:/Program Files (x86)/AutoHotkey/AutoHotkey.exe"),
+        ])
+
+    for name in names:
         found = shutil.which(name)
         if found:
             candidates.append(Path(found))
-    candidates.extend([
-        Path("C:/Program Files/AutoHotkey/v2/AutoHotkey64.exe"),
-        Path("C:/Program Files/AutoHotkey/v2/AutoHotkey.exe"),
-        Path("C:/Program Files/AutoHotkey/AutoHotkey.exe"),
-        Path("C:/Program Files/AutoHotkey/AutoHotkey64.exe"),
-        Path("C:/Program Files (x86)/AutoHotkey/AutoHotkey.exe"),
-    ])
+
+    seen = set()
     for path in candidates:
+        try:
+            path = Path(path)
+        except Exception:
+            continue
+        key = str(path).lower()
+        if key in seen:
+            continue
+        seen.add(key)
         if path.exists():
-            return str(path)
+            if not version:
+                return str(path)
+            detected = detect_ahk_version(path)
+            if detected == version or not detected:
+                return str(path)
     return None
+
+
+def selected_ahk_version_from_export(export_kind):
+    text = str(export_kind or "").lower()
+    if "v1" in text or "1" in text and "autohotkey" in text:
+        return "1"
+    return "2"
+
+
+def show_missing_ahk_and_exit():
+    message = (
+        "CodeHub requires AutoHotkey to run.\n\n"
+        "AutoHotkey was not found on this PC, so CodeHub cannot open.\n\n"
+        "Install AutoHotkey v2 or AutoHotkey v1.1, then reopen CodeHub.\n"
+        "You can choose v1 or v2 inside CodeHub Settings after it starts."
+    )
+    try:
+        root = Tk()
+        root.withdraw()
+        messagebox.showerror(APP_NAME, message, parent=root)
+        root.destroy()
+    except Exception:
+        print(message, file=sys.stderr)
+    sys.exit(1)
+
+
+def require_autohotkey_or_exit():
+    if not find_ahk_exe("2") and not find_ahk_exe("1") and not find_ahk_exe():
+        show_missing_ahk_and_exit()
+
+
+def ahk_install_url(version=None):
+    # Official AutoHotkey download page. Use the same page for v1/v2 choices.
+    return "https://www.autohotkey.com/"
+
+def describe_missing_ahk(version=None):
+    version = str(version or "").strip()
+    if version == "1":
+        return "AutoHotkey v1.1 is required to save or run this AHK v1 script."
+    if version == "2":
+        return "AutoHotkey v2 is required to save or run this AHK v2 script."
+    return "AutoHotkey is required to save or run AutoHotkey scripts."
 
 
 def ahk_text(text):
@@ -458,10 +685,10 @@ def generate_ahk(events, mode, script_name):
         "    loader.MarginX := 18",
         "    loader.MarginY := 14",
         "    loader.SetFont('s10 cEAF6FF', 'Segoe UI')",
-        "    loader.AddText('w300 Center', title)",
+        "    loader.AddText('w300 Center', 'AutoHotkey v2 · ' title)",
         "    loader.SetFont('s8 c8FD9FF', 'Segoe UI')",
-        "    status := loader.AddText('w300 Center y+6', 'CodeHub macro loader')",
-        "    barBg := loader.AddProgress('w300 h10 y+10 Background182434 c176BFF Range0-100', 0)",
+        "    status := loader.AddText('w300 Center y+6', 'CodeHub AutoHotkey v2 loader')",
+        "    barBg := loader.AddProgress('w300 h10 y+10 Background182434 c33FF66 Range0-100', 0)",
         "    x := (A_ScreenWidth - 336) // 2",
         "    y := (A_ScreenHeight - 118) // 2",
         "    loader.Show('NoActivate x' x ' y' y ' w336 h118')",
@@ -486,7 +713,7 @@ def generate_ahk(events, mode, script_name):
         "    wm.MarginX := 8",
         "    wm.MarginY := 4",
         "    wm.SetFont('s8 cD6DEE8', 'Segoe UI')",
-        '    wm.AddText("w150 Center", "Made by Cat")',
+        '    wm.AddText("w180 Center", "Made by Cat · AutoHotkey v2")',
         "    WinSetTransparent(62, wm.Hwnd)",
         "    x := A_ScreenWidth - 174",
         "    y := 4",
@@ -497,18 +724,152 @@ def generate_ahk(events, mode, script_name):
     return "\n".join(lines)
 
 
+
+def generate_ahk_v1(events, mode, script_name):
+    name = safe_name(script_name)
+    load_ms = max(450, min(2400, 420 + len(events) * 7))
+    lines = [
+        "#Requires AutoHotkey v1.1",
+        "#SingleInstance Force",
+        "; Generated by CodeHub / Macro Maker.",
+        f"; Script: {name}",
+        f"; Mode: {mode}",
+        f"; Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "; Hotkeys: F1 starts playback, F2 stops playback, Numpad 5 exits.",
+        "SetKeyDelay, -1, -1",
+        "SetMouseDelay, -1",
+        "SetWinDelay, -1",
+        "SetControlDelay, -1",
+        "global running := false",
+        f'global macroName := "{ahk_text(name)}"',
+        "CreateWatermark()",
+        f"ShowCodeHubLoader({load_ms}, \"Loading \" . macroName)",
+        "",
+        "F1::",
+        "running := true",
+        "ToolTip, Started %macroName%, 16, 16",
+        "SetTimer, ClearToolTip, -900",
+        f"ShowCodeHubLoader({load_ms}, \"Preparing playback\")",
+        "PlayMacro()",
+        "return",
+        "",
+        "F2::",
+        "running := false",
+        "ToolTip, Stopped %macroName%, 16, 16",
+        "SetTimer, ClearToolTip, -900",
+        "return",
+        "",
+        "Numpad5::ExitApp",
+        "",
+        "ClearToolTip:",
+        "ToolTip",
+        "return",
+        "",
+        "PlayMacro()",
+        "{",
+        "    global running",
+        "    startTick := A_TickCount",
+    ]
+    for event in events:
+        event_time = float(event.get("time", 0))
+        target_ms = int(max(0, event_time) * 1000)
+        lines.extend(["    if (!running)", "        return"])
+        if target_ms > 0:
+            lines.append(f"    WaitUntil(startTick + {target_ms})")
+        kind = event.get("type")
+        if kind == "mouse_move" and mode == "advanced":
+            lines.append(f"    MouseMove, {int(event.get('x', 0))}, {int(event.get('y', 0))}, 0")
+        elif kind == "mouse_click":
+            x = int(event.get("x", 0)); y = int(event.get("y", 0))
+            button = str(event.get("button", "left")).capitalize()
+            pressed = event.get("pressed", True)
+            if mode == "minimal":
+                if pressed:
+                    lines.append(f"    Click, {x}, {y}")
+            else:
+                action = "Down" if pressed else "Up"
+                btn = "" if button == "Left" else button
+                lines.append(f"    Click, {x}, {y}, {btn}, 1, 0, {action}".replace(", ,", ","))
+        elif kind == "mouse_scroll" and mode != "minimal":
+            wheel = "WheelUp" if int(event.get("dy", 0)) > 0 else "WheelDown"
+            lines.append(f"    Send, {{{wheel}}}")
+        elif kind == "key_char" and mode == "minimal":
+            char = str(event.get("char", "")).replace("`", "``")
+            lines.append(f"    SendRaw, {char}")
+        elif kind in ("key_press", "key_release"):
+            key = to_ahk_key(str(event.get("key", "")))
+            if key and not (mode == "minimal" and kind == "key_release"):
+                direction = " down" if kind == "key_press" else " up"
+                lines.append(f"    Send, {{{key}{direction}}}")
+    lines.extend([
+        "    running := false",
+        "}",
+        "",
+        "WaitUntil(targetTick)",
+        "{",
+        "    global running",
+        "    while (running && A_TickCount < targetTick)",
+        "    {",
+        "        remaining := targetTick - A_TickCount",
+        "        if (remaining > 3)",
+        "            Sleep, 1",
+        "        else",
+        "            Sleep, 0",
+        "    }",
+        "}",
+        "",
+        "ShowCodeHubLoader(durationMs := 900, title := \"Loading macro\")",
+        "{",
+        "    Gui, Loader:New, +AlwaysOnTop -Caption +ToolWindow",
+        "    Gui, Loader:Color, 081019",
+        "    Gui, Loader:Font, s10 cEAF6FF, Segoe UI",
+        "    Gui, Loader:Add, Text, w300 Center, AutoHotkey v1.1 - %title%",
+        "    Gui, Loader:Font, s8 c8FD9FF, Segoe UI",
+        "    Gui, Loader:Add, Text, vLoaderStatus w300 Center y+6, CodeHub AutoHotkey v1 loader",
+        "    Gui, Loader:Add, Progress, vLoaderBar w300 h10 y+10 Background182434 c33FF66 Range0-100, 0",
+        "    x := (A_ScreenWidth - 336) // 2",
+        "    y := (A_ScreenHeight - 118) // 2",
+        "    Gui, Loader:Show, NoActivate x%x% y%y% w336 h118",
+        "    steps := 28",
+        "    delay := Max(8, Floor(durationMs / steps))",
+        "    Loop, %steps%",
+        "    {",
+        "        val := Floor((A_Index / steps) * 100)",
+        "        GuiControl, Loader:, LoaderBar, %val%",
+        "        GuiControl, Loader:, LoaderStatus, Indexing input timing... %val%`%",
+        "        Sleep, %delay%",
+        "    }",
+        "    Sleep, 350",
+        "    Gui, Loader:Destroy",
+        "}",
+        "",
+        "CreateWatermark()",
+        "{",
+        "    Gui, WM:New, +AlwaysOnTop -Caption +ToolWindow +E0x20",
+        "    Gui, WM:Color, 101820",
+        "    Gui, WM:Font, s8 cD6DEE8, Segoe UI",
+        "    Gui, WM:Add, Text, w180 Center, Made by Cat · AutoHotkey v1",
+        "    x := A_ScreenWidth - 174",
+        "    Gui, WM:Show, NoActivate x%x% y4 w168 h26",
+        "    WinSet, Transparent, 62, ahk_id %A_ScriptHwnd%",
+        "}",
+    ])
+    return "\n".join(lines)
+
+
 def generate_python(events, mode, script_name):
     name = safe_name(script_name)
     payload = json.dumps(events, indent=2)
-    return f'''"""
+    return f'''\"\"\"
 Generated by CodeHub / Macro Maker.
 Script: {name}
+Engine: Python
 Hotkeys: F1 starts playback, F2 stops playback, Numpad 5 exits.
-Watermark: remove the Watermark class and the Watermark().show() line if you do not want it.
-Editing notes: change event "time" values for timing and x/y values for click positions.
-"""
+Watermark: Made by Cat.
+\"\"\"
 import json
 import os
+import math
 import threading
 import time
 import tkinter as tk
@@ -534,6 +895,52 @@ def hide_console_if_present():
         pass
 
 
+class CodeHubLoader:
+    def __init__(self, title="Preparing Python macro", duration_ms=1700):
+        self.title = title
+        self.duration_ms = max(900, int(duration_ms))
+        self.root = tk.Tk()
+        self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
+        self.root.configure(bg="#07101F")
+        self.root.geometry(self._center_geometry(470, 210))
+        self.canvas = tk.Canvas(self.root, width=470, height=210, bg="#07101F", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+
+    def _center_geometry(self, w, h):
+        self.root.update_idletasks()
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        return f"{{w}}x{{h}}+{{(sw-w)//2}}+{{(sh-h)//2}}"
+
+    def run(self):
+        steps = 34
+        for i in range(steps + 1):
+            pct = i / steps
+            self.canvas.delete("all")
+            self.canvas.create_rectangle(0, 0, 470, 210, fill="#07101F", outline="")
+            self.canvas.create_text(235, 32, text="CodeHub Python Loader", fill="#57A6FF", font=("Segoe UI", 16, "bold"))
+            self.canvas.create_text(235, 62, text=self.title, fill="#DDEBFF", font=("Segoe UI", 10))
+            for n in range(18):
+                x = 35 + n * 22
+                h = 15 + ((i + n * 2) % 10) * 5
+                self.canvas.create_rectangle(x, 128 - h, x + 10, 128, fill="#57A6FF", outline="")
+            angle = i * 0.35
+            for n in range(10):
+                a = angle + n * 0.628
+                r = 22 + (n % 3) * 5
+                x = 235 + int(math.cos(a) * r)
+                y = 151 + int(math.sin(a) * r)
+                self.canvas.create_oval(x-3, y-3, x+3, y+3, fill="#57A6FF", outline="")
+            self.canvas.create_rectangle(42, 172, 428, 186, outline="#24496E", width=1)
+            self.canvas.create_rectangle(44, 174, 44 + int(382 * pct), 184, fill="#57A6FF", outline="")
+            self.canvas.create_text(235, 199, text=f"Python engine initializing... {{int(pct * 100)}}%", fill="#9FCBFF", font=("Consolas", 9))
+            self.root.update()
+            time.sleep(self.duration_ms / 1000 / steps)
+        time.sleep(0.18)
+        self.root.destroy()
+
+
 class Watermark:
     def __init__(self):
         self.root = tk.Tk()
@@ -542,16 +949,15 @@ class Watermark:
         self.root.attributes("-alpha", 0.46)
         label = tk.Label(
             self.root,
-            text="Made by Cat",
+            text="Made by Cat · Python",
             bg="#101820",
-            fg="#d6dee8",
-            font=("Segoe UI", 7),
-            padx=6,
-            pady=2,
+            fg="#57A6FF",
+            font=("Segoe UI", 7, "bold"),
+            padx=7,
+            pady=3,
         )
         label.pack()
         self.root.update_idletasks()
-        self.root.attributes("-alpha", 0.24)
         x = self.root.winfo_screenwidth() - self.root.winfo_width() - 6
         self.root.geometry(f"+{{x}}+4")
 
@@ -575,6 +981,7 @@ def key_from_text(text):
 
 def play_macro():
     global running
+    CodeHubLoader("Preparing playback for " + SCRIPT_NAME, 1500).run()
     start = time.perf_counter()
     print(f"[Macro Maker] Playing {{SCRIPT_NAME}}. F2 stops; Numpad 5 exits.")
     for event in EVENTS:
@@ -638,8 +1045,11 @@ def on_press(key):
 
 if __name__ == "__main__":
     hide_console_if_present()
+    CodeHubLoader("Starting " + SCRIPT_NAME, 1800).run()
     print("F1 start | F2 stop | Numpad 5 exit")
-    Watermark().show()
+    global WATERMARK
+    WATERMARK = Watermark()
+    WATERMARK.show()
     with keyboard.Listener(on_press=on_press) as listener:
         listener.join()
 '''
@@ -771,7 +1181,7 @@ class SaveRecordingDialog:
         name_e = ttk.Entry(b, textvariable=self.name_var, style="Dark.TEntry")
         name_e.pack(fill=X, pady=(4, 10))
         ttk.Label(b, text="Create script as", style="FieldLabel.TLabel").pack(anchor="w")
-        ttk.Combobox(b, textvariable=self.export_var, values=["Default", "AutoHotkey v2", "Python"],
+        ttk.Combobox(b, textvariable=self.export_var, values=["Default", "AutoHotkey v2", "AutoHotkey v1", "Python"],
                      state="readonly", style="Dark.TCombobox").pack(fill=X, pady=(4, 0))
         row = self.window.btn_row()
         ttk.Button(row, text="Cancel", style="Ghost.TButton", command=self.cancel).pack(side=RIGHT, padx=(6, 0))
@@ -819,13 +1229,13 @@ class TitleBar(Frame):
         # Window controls (right side)
         Frame(self, bg=C["panel"], width=10).pack(side=RIGHT)
 
-        close_btn = self._wbtn("", C["red"], self.app.close)
+        close_btn = self._wbtn("✕", C["red"], self.app.close)
         close_btn.pack(side=RIGHT, padx=2, pady=10)
 
-        max_btn = self._wbtn("", C["green"], self._toggle_max)
+        max_btn = self._wbtn("□", C["green"], self._toggle_max)
         max_btn.pack(side=RIGHT, padx=2, pady=10)
 
-        min_btn = self._wbtn("", C["yellow"], self.app.minimize_window)
+        min_btn = self._wbtn("—", C["yellow"], self.app.minimize_window)
         min_btn.pack(side=RIGHT, padx=2, pady=10)
 
         Frame(self, bg=C["panel"], width=10).pack(side=RIGHT)
@@ -904,6 +1314,7 @@ class CodeHubApp:
     def __init__(self):
         ensure_files()
         self.settings = read_json(SETTINGS_PATH, DEFAULT_SETTINGS)
+        apply_theme_to_palette(self.settings)
         self.recordings = read_json(RECORDINGS_PATH, {"recordings": []})
         self.knowledge = read_json(KNOWLEDGE_PATH, DEFAULT_KNOWLEDGE)
         set_windows_app_id()
@@ -944,6 +1355,9 @@ class CodeHubApp:
         self.fullscreen = BooleanVar(value=False)
         self.mode = StringVar(value="normal")
         self.default_export_kind = StringVar(value=self.settings.get("default_export_kind", "AutoHotkey v2"))
+        self.ahk_version = StringVar(value=str(self.settings.get("ahk_version", "2")))
+        self.ahk_path_v1 = StringVar(value=str(self.settings.get("ahk_path_v1", "")))
+        self.ahk_path_v2 = StringVar(value=str(self.settings.get("ahk_path_v2", "")))
         self.export_dir_var = StringVar(value=self.settings.get("export_dir", str(EXPORT_DIR)))
         self.status = StringVar(value="Ready")
         self.ai_can_edit = BooleanVar(value=bool(self.settings.get("ai_can_edit", False)))
@@ -951,7 +1365,17 @@ class CodeHubApp:
         self.ai_can_run = BooleanVar(value=bool(self.settings.get("ai_can_run", False)))
         self.ui_font_size = StringVar(value=str(self.settings.get("ui_font_size", 9)))
         self.ui_density = StringVar(value=self.settings.get("ui_density", "compact"))
+        self.theme_mode = StringVar(value=self.settings.get("theme_mode", "computer_auto"))
+        self.custom_bg = StringVar(value=self.settings.get("custom_bg", "#050505"))
+        self.custom_panel = StringVar(value=self.settings.get("custom_panel", "#0B0B0B"))
+        self.custom_text = StringVar(value=self.settings.get("custom_text", "#E8F0F8"))
+        self.custom_accent = StringVar(value=self.settings.get("custom_accent", "#57A6FF"))
         self.record_screenshots = BooleanVar(value=bool(self.settings.get("record_screenshots", True)))
+        self.record_replay_video = BooleanVar(value=bool(self.settings.get("record_replay_video", False)))
+        self.builder_background_image = StringVar(value=str(self.settings.get("builder_background_image", "")))
+        self.builder_background_photo = None
+        self.builder_selected_index = None
+        self.builder_drag_offset = (0, 0)
         self.auto_update = BooleanVar(value=bool(self.settings.get("auto_update", False)))
         self.review_fps = StringVar(value=str(self.settings.get("review_capture_fps", 60)))
         self._last_file_snapshot = set()
@@ -976,6 +1400,10 @@ class CodeHubApp:
         self.review_paused = False
         self.review_play_index = 0
         self.review_speed = DoubleVar(value=1.0)
+        self.review_video_path = None
+        self.replay_video_thread = None
+        self.replay_video_stop_event = None
+        self.replay_video_start_time = None
         self._capture_busy = False
         self.ai_pending_path = None
         self.ai_pending_text = ""
@@ -984,6 +1412,18 @@ class CodeHubApp:
         self.current_editor_saved_text = ""
         self.editor_dirty = False
         self._loading_editor = False
+
+        if not self.ahk_path_v2.get():
+            detected_v2 = find_ahk_exe("2")
+            if detected_v2:
+                self.ahk_path_v2.set(detected_v2)
+                self.settings["ahk_path_v2"] = detected_v2
+        if not self.ahk_path_v1.get():
+            detected_v1 = find_ahk_exe("1")
+            if detected_v1:
+                self.ahk_path_v1.set(detected_v1)
+                self.settings["ahk_path_v1"] = detected_v1
+        write_json(SETTINGS_PATH, self.settings)
 
         self._configure_styles()
         self._build()
@@ -995,13 +1435,164 @@ class CodeHubApp:
             self.root.after(1200, lambda: self.check_for_updates(auto=True))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
+
+
+
+    def show_app_intro_animation(self):
+        if getattr(self, "_intro_shown", False):
+            return
+        self._intro_shown = True
+
+        try:
+            self.root.withdraw()
+            hide_console_if_present()
+        except Exception:
+            pass
+
+        sound_duration = 4.0
+
+        intro = Toplevel(self.root)
+        intro.overrideredirect(True)
+        intro.attributes("-topmost", True)
+        intro.configure(bg="#020607")
+
+        w, h = 760, 440
+        sw = intro.winfo_screenwidth()
+        sh = intro.winfo_screenheight()
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2)
+        intro.geometry(f"{w}x{h}+{x}+{y}")
+
+        canvas = Canvas(intro, width=w, height=h, bg="#020607", highlightthickness=0)
+        canvas.pack(fill=BOTH, expand=True)
+
+        fps = 30
+        frames = max(60, int(sound_duration * fps))
+        modules = [
+            ("CORE", "loading interface shell"),
+            ("REC", "arming recorder engine"),
+            ("AHK", "checking AutoHotkey bridge"),
+            ("PY", "mounting Python export tools"),
+            ("WORK", "indexing workspace files"),
+            ("REPLAY", "warming screenshot replay cache"),
+            ("OCR", "preparing screen text tools"),
+            ("UI", "finalizing CodeHub window"),
+        ]
+        spinner_frames = ["◜", "◠", "◝", "◞", "◡", "◟"]
+
+        def reveal_main_ui():
+            try:
+                import winsound
+                winsound.PlaySound(None, winsound.SND_PURGE)
+            except Exception:
+                pass
+            try:
+                intro.destroy()
+            except Exception:
+                pass
+            try:
+                self.root.deiconify()
+                self.root.lift()
+                self.root.focus_force()
+                self.root.update_idletasks()
+                self.force_taskbar_icon()
+            except Exception:
+                pass
+
+        def draw(i=0):
+            pct = min(1.0, i / float(frames))
+            canvas.delete("all")
+
+            # Modern dark glass background.
+            canvas.create_rectangle(0, 0, w, h, fill="#020607", outline="")
+            canvas.create_rectangle(18, 18, w - 18, h - 18, fill="#050D10", outline="#183742", width=1)
+            canvas.create_rectangle(30, 30, w - 30, h - 30, fill="#071013", outline="#10272F", width=1)
+
+            # Soft grid / scanline mix: old PC feeling, cleaner modern look.
+            for xx in range(50, w - 50, 34):
+                canvas.create_line(xx, 42, xx, h - 42, fill="#071A1C")
+            for yy in range(48, h - 48, 18):
+                color = "#061316" if (yy // 18 + i // 4) % 2 == 0 else "#071A1D"
+                canvas.create_line(42, yy, w - 42, yy, fill=color)
+
+            # Brand header.
+            canvas.create_text(w // 2, 60, text="CODEHUB", fill="#E8F0F8", font=("Segoe UI", 31, "bold"))
+            canvas.create_text(w // 2, 94, text="macro maker  ·  scripts  ·  replay  ·  tools", fill="#7A98B8", font=("Consolas", 10))
+
+            # Center dial/network ring.
+            cx, cy = w // 2, 174
+            pulse = 0.5 + 0.5 * math.sin(i * 0.18)
+            for ring in range(4):
+                rr = 34 + ring * 20 + int(pulse * 3)
+                outline = mix_hex(C["accent"], C["green"], 0.25 + ring * 0.13)
+                canvas.create_oval(cx - rr, cy - rr, cx + rr, cy + rr, outline=mix_hex(outline, "#020607", 0.35), width=1)
+            for n in range(28):
+                a = (i * 0.095) + n * (math.pi * 2 / 28)
+                rr = 35 + (n % 6) * 12
+                x1 = cx + math.cos(a) * rr
+                y1 = cy + math.sin(a) * rr
+                size = 2 + (n % 4)
+                col = C["accent"] if n % 3 else C["green"]
+                canvas.create_oval(x1 - size, y1 - size, x1 + size, y1 + size, fill=col, outline="")
+
+            # Chunky modem signal bars.
+            for n in range(32):
+                bx = 70 + n * 19
+                local = ((i + n * 4) % 22) / 22
+                bh = 10 + int(70 * local)
+                if n % 6 == 0:
+                    col = "#65FF9A"
+                elif n % 2 == 0:
+                    col = C["accent"]
+                else:
+                    col = mix_hex(C["accent"], C["green"], 0.45)
+                canvas.create_rectangle(bx, 282 - bh, bx + 10, 282, fill=col, outline="")
+
+            # What is loading: module cards.
+            active_count = min(len(modules), max(1, int(pct * len(modules)) + 1))
+            card_y = 302
+            card_w = 78
+            gap = 9
+            start_x = (w - (len(modules) * card_w + (len(modules) - 1) * gap)) // 2
+            for idx, (code, desc) in enumerate(modules):
+                x0 = start_x + idx * (card_w + gap)
+                loaded = idx < active_count - 1
+                active = idx == active_count - 1
+                border = C["green"] if loaded else (C["accent"] if active else "#1C3338")
+                fill = "#0B1B1F" if active else "#071013"
+                canvas.create_rectangle(x0, card_y, x0 + card_w, card_y + 42, fill=fill, outline=border, width=1)
+                canvas.create_text(x0 + card_w // 2, card_y + 14, text=("✓ " if loaded else "") + code, fill=border, font=("Consolas", 9, "bold"))
+                canvas.create_text(x0 + card_w // 2, card_y + 30, text="READY" if loaded else ("LOAD" if active else "WAIT"), fill="#7A98B8", font=("Consolas", 7))
+
+            # Terminal status line.
+            active_desc = modules[min(len(modules) - 1, active_count - 1)][1]
+            spinner = spinner_frames[i % len(spinner_frames)]
+            canvas.create_rectangle(58, 356, w - 58, 384, fill="#03100C", outline="#1B3A2A")
+            canvas.create_text(76, 370, anchor="w", text=f"{spinner} {active_desc}...", fill="#65FF9A", font=("Consolas", 10))
+            canvas.create_text(w - 78, 370, anchor="e", text=f"{int(pct * 100):03d}%", fill="#9FCBFF", font=("Consolas", 10, "bold"))
+
+            # Smooth progress with chunky segments.
+            bar_x0, bar_y0 = 78, 400
+            bar_x1, bar_y1 = w - 78, 416
+            canvas.create_rectangle(bar_x0, bar_y0, bar_x1, bar_y1, outline="#254835", width=1)
+            filled = int((bar_x1 - bar_x0 - 6) * pct)
+            for chunk_x in range(0, filled, 20):
+                x0 = bar_x0 + 3 + chunk_x
+                x1 = min(bar_x0 + 3 + filled, x0 + 14)
+                canvas.create_rectangle(x0, bar_y0 + 3, x1, bar_y1 - 3, fill=C["accent"] if chunk_x % 40 else C["green"], outline="")
+
+            if i < frames:
+                intro.after(int(1000 / fps), lambda: draw(i + 1))
+            else:
+                intro.after(250, reveal_main_ui)
+
+        draw()
+
     def show_ready_window(self):
-        self.root.deiconify()
-        self.root.lift()
-        self.root.focus_force()
+        # Keep the real app hidden until the splash animation is done.
+        self.root.withdraw()
         self.root.update_idletasks()
-        self.force_taskbar_icon()
-        self.root.after(150, hide_console_if_present)
+        self.root.after(50, self.show_app_intro_animation)
 
     def center_geometry(self, width, height):
         screen_w = self.root.winfo_screenwidth()
@@ -1273,8 +1864,8 @@ class CodeHubApp:
 
         ttk.Label(ctrl, text="Export as", style="PanelMuted2.TLabel").grid(row=0, column=2, sticky="w", padx=(0, 6))
         ttk.Combobox(ctrl, textvariable=self.default_export_kind,
-                     values=["AutoHotkey v2", "Python"],
-                     width=14, state="readonly").grid(row=0, column=3, padx=(0, 16))
+                     values=["AutoHotkey v2", "AutoHotkey v1", "Python"],
+                     width=15, state="readonly").grid(row=0, column=3, padx=(0, 16))
 
         self.start_button = ttk.Button(ctrl, text="  F1  Start Recording",
                                         style="Green.TButton", command=self.start_recording)
@@ -1466,7 +2057,10 @@ class CodeHubApp:
         ttk.Button(buttons, text="Add Block", style="Green.TButton", command=self.builder_add_block).pack(side=LEFT, padx=(0, 6))
         ttk.Button(buttons, text="Clear", style="Red.TButton", command=self.builder_clear).pack(side=LEFT, padx=(0, 6))
         ttk.Button(buttons, text="Generate", style="Accent.TButton", command=self.builder_generate).pack(side=LEFT, padx=(0, 6))
-        ttk.Button(buttons, text="Send to Editor", style="Ghost.TButton", command=self.builder_send_to_editor).pack(side=LEFT)
+        ttk.Button(buttons, text="Send to Editor", style="Ghost.TButton", command=self.builder_send_to_editor).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(buttons, text="Screenshot BG", style="Small.TButton", command=self.builder_take_background_screenshot).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(buttons, text="Choose BG", style="Small.TButton", command=self.builder_choose_background).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(buttons, text="Clear BG", style="Small.TButton", command=self.builder_clear_background).pack(side=LEFT)
 
         panes = ttk.PanedWindow(pad, orient=HORIZONTAL)
         panes.pack(fill=BOTH, expand=True, pady=(8, 0))
@@ -1482,9 +2076,12 @@ class CodeHubApp:
         self.builder_list.configure(fg=C["cyan"])
         self.builder_list.pack(fill=BOTH, expand=True)
 
-        self._section(mid, "Visual Preview")
-        self.builder_canvas = Canvas(mid, bg="#0a0a0a", highlightthickness=1, highlightbackground=C["border"], width=360, height=250)
+        self._section(mid, "Drag Sandbox Preview")
+        self.builder_canvas = Canvas(mid, bg="#0a0a0a", highlightthickness=1, highlightbackground=C["border"], width=720, height=460)
         self.builder_canvas.pack(fill=BOTH, expand=True)
+        self.builder_canvas.bind("<ButtonPress-1>", self.builder_canvas_press)
+        self.builder_canvas.bind("<B1-Motion>", self.builder_canvas_drag)
+        self.builder_canvas.bind("<ButtonRelease-1>", self.builder_canvas_release)
 
         self._section(right, "Generated Code")
         self.builder_output = self._code_box(right, height=22)
@@ -1605,9 +2202,9 @@ class CodeHubApp:
                                                     values=[], state="readonly", width=36)
         self.review_recording_combo.pack(side=LEFT, padx=(0, 8))
 
-        for txt, cmd in [("Load", self.load_review_recording), (" Play", self.play_review),
-                          (" Pause", self.pause_review), (" Stop", self.stop_visual_replay),
-                          (" Rewind", self.rewind_review)]:
+        for txt, cmd in [("Load", self.load_review_recording), ("Play Preview", self.play_review),
+                          ("Pause", self.pause_review), ("Stop", self.stop_visual_replay),
+                          ("Rewind", self.rewind_review), ("Open Video", self.open_review_video)]:
             ttk.Button(top, text=txt, style="Ghost.TButton", command=cmd).pack(side=LEFT, padx=3)
 
         ttk.Label(top, text="Speed:", style="PanelMuted2.TLabel").pack(side=LEFT, padx=(10, 4))
@@ -1616,7 +2213,7 @@ class CodeHubApp:
                      state="readonly", width=6).pack(side=LEFT)
         ttk.Label(top, text="FPS:", style="PanelMuted2.TLabel").pack(side=LEFT, padx=(10, 4))
         ttk.Combobox(top, textvariable=self.review_fps,
-                     values=["30", "60", "120", "144", "240", "360", "480", "1000"],
+                     values=REPLAY_FPS_CHOICES,
                      state="readonly", width=6).pack(side=LEFT)
         ttk.Button(top, text="Save FPS", style="Ghost.TButton", command=self.save_permissions).pack(side=LEFT, padx=(6, 0))
 
@@ -1678,7 +2275,30 @@ class CodeHubApp:
 
     def _settings_tab(self):
         tab = Frame(self.tabs, bg=C["bg"])
-        pad = self._pad_frame(tab)
+
+        # Scrollable settings page: fixes the hidden Data Paths section on smaller screens.
+        outer = Frame(tab, bg=C["bg"])
+        outer.pack(fill=BOTH, expand=True)
+        canvas = Canvas(outer, bg=C["bg"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=RIGHT, fill=Y)
+        canvas.pack(side=LEFT, fill=BOTH, expand=True)
+
+        pad = Frame(canvas, bg=C["bg"], padx=14, pady=12)
+        settings_window = canvas.create_window((0, 0), window=pad, anchor="nw")
+
+        def _sync_scroll_region(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfigure(settings_window, width=canvas.winfo_width())
+
+        def _mousewheel(event):
+            delta = int(-1 * (event.delta / 120)) if getattr(event, "delta", 0) else 0
+            canvas.yview_scroll(delta, "units")
+
+        pad.bind("<Configure>", _sync_scroll_region)
+        canvas.bind("<Configure>", _sync_scroll_region)
+        canvas.bind_all("<MouseWheel>", _mousewheel)
 
         self._section(pad, "Export Folder")
         er = Frame(pad, bg=C["bg"], pady=4)
@@ -1686,17 +2306,57 @@ class CodeHubApp:
         ttk.Entry(er, textvariable=self.export_dir_var).pack(side=LEFT, fill=X, expand=True, padx=(0, 8))
         ttk.Button(er, text="Browse", style="Ghost.TButton", command=self.choose_export_dir).pack(side=RIGHT)
 
+        self._section(pad, "AutoHotkey Requirement")
+        ahk_info = ttk.Label(
+            pad,
+            text="CodeHub now requires AutoHotkey. Pick whether exports/runs should use AutoHotkey v2 or v1.1. If CodeHub cannot find any AutoHotkey install, it will fail on startup.",
+            style="Muted.TLabel",
+            wraplength=900,
+        )
+        ahk_info.pack(anchor="w", pady=(2, 6))
+        ahkr = Frame(pad, bg=C["bg"], pady=4)
+        ahkr.pack(fill=X)
+        ttk.Label(ahkr, text="Use:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        ttk.Combobox(ahkr, textvariable=self.ahk_version, values=["2", "1"], state="readonly", width=5).pack(side=LEFT, padx=(0, 10))
+        ttk.Button(ahkr, text="Auto Detect", style="Ghost.TButton", command=self.autodetect_ahk_paths).pack(side=LEFT, padx=(0, 8))
+        ttk.Button(ahkr, text="Save AutoHotkey Settings", style="Accent.TButton", command=self.save_permissions).pack(side=LEFT)
+
+        ahk2 = Frame(pad, bg=C["bg"], pady=4)
+        ahk2.pack(fill=X)
+        ttk.Label(ahk2, text="AHK v2:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        ttk.Entry(ahk2, textvariable=self.ahk_path_v2).pack(side=LEFT, fill=X, expand=True, padx=(0, 8))
+        ttk.Button(ahk2, text="Browse", style="Ghost.TButton", command=lambda: self.choose_ahk_path("2")).pack(side=RIGHT)
+
+        ahk1 = Frame(pad, bg=C["bg"], pady=4)
+        ahk1.pack(fill=X)
+        ttk.Label(ahk1, text="AHK v1:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        ttk.Entry(ahk1, textvariable=self.ahk_path_v1).pack(side=LEFT, fill=X, expand=True, padx=(0, 8))
+        ttk.Button(ahk1, text="Browse", style="Ghost.TButton", command=lambda: self.choose_ahk_path("1")).pack(side=RIGHT)
+
         self._section(pad, "Appearance")
         ar = Frame(pad, bg=C["bg"], pady=4)
         ar.pack(fill=X)
+        ttk.Label(ar, text="Theme:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        ttk.Combobox(ar, textvariable=self.theme_mode,
+                     values=["computer_auto", "dark", "light", "custom"],
+                     state="readonly", width=15).pack(side=LEFT, padx=(0, 12))
         ttk.Label(ar, text="Font size:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
-        ttk.Combobox(ar, textvariable=self.ui_font_size, values=["8","9","10","11","12"],
+        ttk.Combobox(ar, textvariable=self.ui_font_size, values=["8", "9", "10", "11", "12"],
                      state="readonly", width=6).pack(side=LEFT, padx=(0, 12))
         ttk.Label(ar, text="Density:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
-        ttk.Combobox(ar, textvariable=self.ui_density, values=["compact","comfortable"],
+        ttk.Combobox(ar, textvariable=self.ui_density, values=["compact", "comfortable"],
                      state="readonly", width=12).pack(side=LEFT, padx=(0, 12))
         ttk.Button(ar, text="Apply", style="Accent.TButton", command=self.save_ui_settings).pack(side=LEFT)
         ttk.Button(ar, text="Toggle Fullscreen", style="Ghost.TButton", command=self.toggle_fullscreen).pack(side=LEFT, padx=(8, 0))
+
+        cr = Frame(pad, bg=C["bg"], pady=4)
+        cr.pack(fill=X)
+        for label, var in [("BG", self.custom_bg), ("Panel", self.custom_panel), ("Text", self.custom_text), ("Accent", self.custom_accent)]:
+            ttk.Label(cr, text=label + ":", style="Muted.TLabel").pack(side=LEFT, padx=(0, 4))
+            ttk.Entry(cr, textvariable=var, width=10).pack(side=LEFT, padx=(0, 4))
+            ttk.Button(cr, text="Pick", style="Small.TButton",
+                       command=lambda v=var: self.pick_theme_color(v)).pack(side=LEFT, padx=(0, 8))
+        ttk.Button(cr, text="Save Custom Theme", style="Ghost.TButton", command=self.save_ui_settings).pack(side=LEFT)
 
         self._section(pad, "Updates")
         ur = Frame(pad, bg=C["bg"], pady=4)
@@ -1706,14 +2366,26 @@ class CodeHubApp:
         ttk.Button(ur, text="Run Local Updater", style="Ghost.TButton", command=self.run_local_updater).pack(side=LEFT)
 
         self._section(pad, "Replay Capture")
+        rr_hint = ttk.Label(
+            pad,
+            text="Replay is back to the original screenshot-frame preview. This is less smooth than video, but it reliably shows frames inside CodeHub without FFmpeg/OpenCV video playback issues.",
+            style="Muted.TLabel",
+            wraplength=900,
+        )
+        rr_hint.pack(anchor="w", pady=(2, 6))
+
         rr = Frame(pad, bg=C["bg"], pady=4)
         rr.pack(fill=X)
-        ttk.Checkbutton(rr, text="Capture review screenshots while recording", variable=self.record_screenshots, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
-        ttk.Label(rr, text="FPS:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
-        ttk.Combobox(rr, textvariable=self.review_fps,
-                    values=["30", "60", "90", "120", "144", "165", "240", "360", "480", "1000"],
+        ttk.Checkbutton(rr, text="Experimental OpenCV video capture", variable=self.record_replay_video, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
+
+        rr2 = Frame(pad, bg=C["bg"], pady=4)
+        rr2.pack(fill=X)
+        ttk.Checkbutton(rr2, text="Record screenshot frames for preview", variable=self.record_screenshots, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
+        ttk.Label(rr2, text="FPS:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        ttk.Combobox(rr2, textvariable=self.review_fps,
+                    values=REPLAY_FPS_CHOICES,
                     state="readonly", width=6).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(rr, text="Save Replay FPS", style="Ghost.TButton", command=self.save_permissions).pack(side=LEFT)
+        ttk.Button(rr2, text="Save Replay FPS", style="Ghost.TButton", command=self.save_permissions).pack(side=LEFT)
 
         self._section(pad, "Permissions")
         pr = Frame(pad, bg=C["bg"], pady=4)
@@ -1728,10 +2400,13 @@ class CodeHubApp:
         info.insert(END, f"Settings  : {SETTINGS_PATH}\n")
         info.insert(END, f"Recordings: {RECORDINGS_PATH}\n")
         info.insert(END, f"Knowledge : {KNOWLEDGE_PATH}\n")
-        info.insert(END, f"Exports   : {self.export_dir_var.get()}\n\n")
+        info.insert(END, f"Exports   : {self.export_dir_var.get()}\n")
+        info.insert(END, f"Videos    : {DATA_DIR / 'review_videos'}\n")
+        info.insert(END, f"Screens   : {DATA_DIR / 'review_frames'}\n\n")
         info.insert(END, "Generated scripts include comments for hotkeys, editing, and watermark removal.\n")
-        info.insert(END, "All recordings persist as JSON  they survive app restarts.\n")
+        info.insert(END, "All recordings persist as JSON; they survive app restarts.\n")
         info.configure(state="disabled")
+
         return tab
 
     # 
@@ -1758,6 +2433,7 @@ class CodeHubApp:
             return
         self.is_recording = True
         self.review_shots = []
+        self.review_video_path = None
         self.feed.delete("1.0", END)
         self.settings["default_export_kind"] = self.default_export_kind.get()
         write_json(SETTINGS_PATH, self.settings)
@@ -1768,15 +2444,18 @@ class CodeHubApp:
         self.stop_button.state(["!disabled"])
         self.rec_status_frame.configure(bg=C["red"])
         self.recorder.start(self.mode.get())
+        if self.record_replay_video.get():
+            self.start_replay_video_capture()
         self.capture_review_snapshot("start")
-        fps = self.builder_number(self.review_fps.get(), int(self.settings.get("review_capture_fps", 60)))
-        self.root.after(max(1, int(1000 / max(1, min(MAX_REPLAY_FPS, fps)))), self.capture_review_tick)
+        if self.record_screenshots.get():
+            self.root.after(max(50, int(1000 / max(1, self.builder_number(self.review_fps.get(), 10)))), self.capture_review_tick)
 
     def stop_recording(self):
         if self.macro_locked or not self.is_recording:
             return
         self.is_recording = False
         self.capture_review_snapshot("stop")
+        self.stop_replay_video_capture()
         events = self.recorder.stop()
         self.rec_status_frame.configure(bg=C["border"])
         self.status_bar.set_color(C["text3"])
@@ -1799,6 +2478,7 @@ class CodeHubApp:
             "created": datetime.now().isoformat(timespec="seconds"),
             "events": events,
             "review_screenshots": getattr(self, "review_shots", []),
+            "review_video": self.review_video_path or "",
         }
         self.recordings.setdefault("recordings", []).append(record)
         write_json(RECORDINGS_PATH, self.recordings)
@@ -1846,9 +2526,146 @@ class CodeHubApp:
         if not self.is_recording:
             return
         self.capture_review_snapshot("tick")
-        fps = self.builder_number(self.review_fps.get(), int(self.settings.get("review_capture_fps", 60)))
-        interval = max(1, int(1000 / max(1, min(MAX_REPLAY_FPS, fps))))
+        interval = max(50, int(1000 / max(1, self.builder_number(self.review_fps.get(), 10))))
         self.root.after(interval, self.capture_review_tick)
+
+    def start_replay_video_capture(self):
+        self.review_video_path = None
+        if not self.record_replay_video.get():
+            return
+        if self.replay_video_thread and self.replay_video_thread.is_alive():
+            return
+        try:
+            replay_dir = DATA_DIR / "review_videos"
+            replay_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_path = replay_dir / f"CodeHub_Replay_{stamp}.avi"
+            fps = max(30, min(MAX_REPLAY_FPS, self.builder_number(self.review_fps.get(), 60)))
+            self.review_video_path = str(out_path)
+            self.replay_video_stop_event = threading.Event()
+            self.replay_video_start_time = time.perf_counter()
+            self.replay_video_thread = threading.Thread(
+                target=self._opencv_replay_worker,
+                args=(str(out_path), fps, self.replay_video_stop_event),
+                daemon=True,
+            )
+            self.replay_video_thread.start()
+            self.status.set(f"Recording smooth replay video at {min(int(fps), 30)} FPS")
+        except Exception as e:
+            self.replay_video_thread = None
+            self.review_video_path = None
+            self.status.set(f"Replay video failed; screenshot fallback active: {e}")
+
+    def _opencv_replay_worker(self, out_path, fps, stop_event):
+        writer = None
+        try:
+            import cv2
+            import mss
+            import numpy as np
+
+            # OpenCV recording is CPU-based, so keep it sane and reliable.
+            fps = max(15, min(30, int(fps)))
+            frame_delay = 1.0 / fps
+
+            with mss.mss() as grabber:
+                monitor = grabber.monitors[1]
+                src_w = int(monitor.get("width", 0))
+                src_h = int(monitor.get("height", 0))
+                if src_w <= 0 or src_h <= 0:
+                    raise RuntimeError("Could not detect screen size.")
+
+                # Full 1080p/1440p at high FPS can create broken/laggy AVI files.
+                # Downscale to 1280 wide by default for reliable smooth preview.
+                max_w = 960
+                if src_w > max_w:
+                    scale = max_w / float(src_w)
+                    width = max_w
+                    height = int(src_h * scale)
+                    if height % 2:
+                        height -= 1
+                else:
+                    width, height = src_w, src_h
+
+                # XVID is much lighter than raw screenshot playback and usually easier
+                # for Windows to open than a huge MJPG file. MJPG is fallback.
+                fourcc = cv2.VideoWriter_fourcc(*"XVID")
+                writer = cv2.VideoWriter(str(out_path), fourcc, float(fps), (width, height))
+                if not writer.isOpened():
+                    fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+                    writer = cv2.VideoWriter(str(out_path), fourcc, float(fps), (width, height))
+                if not writer.isOpened():
+                    raise RuntimeError("OpenCV could not start video writer. Try reinstalling opencv-python.")
+
+                next_frame = time.perf_counter()
+                frames_written = 0
+                while not stop_event.is_set():
+                    shot = grabber.grab(monitor)
+                    frame = np.array(shot)
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                    if (width, height) != (src_w, src_h):
+                        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+                    writer.write(frame)
+                    frames_written += 1
+
+                    next_frame += frame_delay
+                    sleep_for = next_frame - time.perf_counter()
+                    if sleep_for > 0:
+                        time.sleep(min(sleep_for, frame_delay))
+                    else:
+                        next_frame = time.perf_counter()
+
+                if frames_written < 3:
+                    raise RuntimeError("Replay recording ended before enough frames were saved.")
+        except Exception as e:
+            self.root.after(0, lambda err=e: self.status.set(f"Replay video failed: {err}"))
+            try:
+                if out_path and Path(out_path).exists() and Path(out_path).stat().st_size < 8192:
+                    Path(out_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        finally:
+            try:
+                if writer:
+                    writer.release()
+            except Exception:
+                pass
+    def stop_replay_video_capture(self):
+        event = self.replay_video_stop_event
+        thread = self.replay_video_thread
+        self.replay_video_stop_event = None
+        self.replay_video_thread = None
+        if event:
+            event.set()
+        if thread and thread.is_alive():
+            try:
+                thread.join(timeout=8)
+            except Exception:
+                pass
+        # If OpenCV failed to create a playable file, do not save a fake video path.
+        try:
+            if self.review_video_path:
+                p = Path(self.review_video_path)
+                if not p.exists() or p.stat().st_size < 8192:
+                    self.review_video_path = None
+        except Exception:
+            self.review_video_path = None
+
+    def open_review_video(self):
+        path = self.review_video_path
+        if not path:
+            _, rec = self.selected_review_recording()
+            if rec:
+                path = rec.get("review_video")
+        if not path or not Path(path).exists():
+            messagebox.showinfo(APP_NAME, "No replay video exists for this recording. Record a new macro with 'Record smooth replay video (no audio)' enabled.")
+            return
+        try:
+            if os.name == "nt":
+                os.startfile(path)
+            else:
+                webbrowser.open(Path(path).as_uri())
+        except Exception as e:
+            messagebox.showerror(APP_NAME, f"Could not open replay video.\n\n{e}")
 
     def refresh_recordings(self):
         if not hasattr(self, "recording_list"):
@@ -1921,8 +2738,17 @@ class CodeHubApp:
     def export_recording(self, rec, export_kind):
         export_dir = resolve_app_path(self.export_dir_var.get())
         export_dir.mkdir(parents=True, exist_ok=True)
+        if export_kind == "Default":
+            export_kind = self.default_export_kind.get()
         if export_kind == "AutoHotkey v2":
+            if not self.ensure_ahk_available_for_action("2", "save an AutoHotkey v2 script"):
+                return
             code = generate_ahk(rec["events"], rec["mode"], rec["name"])
+            path = export_dir / f"{safe_name(rec['name'])}.ahk"
+        elif export_kind == "AutoHotkey v1":
+            if not self.ensure_ahk_available_for_action("1", "save an AutoHotkey v1 script"):
+                return
+            code = generate_ahk_v1(rec["events"], rec["mode"], rec["name"])
             path = export_dir / f"{safe_name(rec['name'])}.ahk"
         else:
             code = generate_python(rec["events"], rec["mode"], rec["name"])
@@ -1944,17 +2770,41 @@ class CodeHubApp:
         idx, rec = self.selected_recording()
         if rec is None:
             return
-        if messagebox.askyesno(APP_NAME, f"Delete cached recording '{rec.get('name')}'?"):
-            ep = Path(rec.get("export_path", ""))
-            if ep.exists() and messagebox.askyesno(APP_NAME, "Also delete the exported script file?"):
-                try:
-                    ep.unlink()
-                except Exception as e:
-                    messagebox.showerror(APP_NAME, f"Could not delete:\n{e}")
-            self.recordings["recordings"].pop(idx)
-            write_json(RECORDINGS_PATH, self.recordings)
-            self.refresh_recordings()
-            self.refresh_files()
+
+        ep = Path(rec.get("export_path", ""))
+        has_script = ep.exists()
+        if has_script:
+            result = messagebox.askyesnocancel(
+                APP_NAME,
+                f"Delete cached recording '{rec.get('name')}'?\n\n"
+                f"Linked script file:\n{ep}\n\n"
+                "Yes = delete cached recording AND exported script file\n"
+                "No = delete cached recording only\n"
+                "Cancel = do nothing",
+            )
+        else:
+            result = messagebox.askyesnocancel(
+                APP_NAME,
+                f"Delete cached recording '{rec.get('name')}'?\n\n"
+                "Yes = delete cached recording\n"
+                "No = do nothing\n"
+                "Cancel = do nothing",
+            )
+
+        if result is None or result is False:
+            return
+
+        if has_script:
+            try:
+                ep.unlink()
+            except Exception as e:
+                messagebox.showerror(APP_NAME, f"Could not delete exported script file:\n{e}")
+                return
+
+        self.recordings["recordings"].pop(idx)
+        write_json(RECORDINGS_PATH, self.recordings)
+        self.refresh_recordings()
+        self.refresh_files()
 
     def rename_recording(self):
         idx, rec = self.selected_recording()
@@ -2078,6 +2928,7 @@ class CodeHubApp:
         if not rec:
             return
         self.review_events = rec.get("events", [])
+        self.review_video_path = rec.get("review_video") or None
         self.review_shot_paths = [p for p in rec.get("review_screenshots", []) if Path(p).exists()]
         self.review_shot_index = 0
         self.review_play_index = 0
@@ -2090,12 +2941,18 @@ class CodeHubApp:
         self.review_output.insert(END, f"Macro : {rec.get('name')}\n")
         self.review_output.insert(END, f"Mode  : {rec.get('mode')}    {len(self.review_events)} events    {total_time:.2f}s\n")
         self.review_output.insert(END, f"Keys  : {len(presses)} presses    {len(clicks)} clicks\n")
+        video_exists = bool(self.review_video_path and Path(self.review_video_path).exists())
+        if video_exists:
+            self.review_output.insert(END, f"Video : {self.review_video_path}\n")
         if self.review_shot_paths:
             self.review_output.insert(END, f"Frames: {len(self.review_shot_paths)} screenshots\n")
             self.show_review_frame(0)
+        elif video_exists:
+            self.review_output.insert(END, "\nVideo exists, but Play Preview uses screenshot frames. Press Open Video to watch the video.\n")
+            self.review_image_label.configure(image="", text="No screenshot frames saved.\nPress Open Video for the AVI replay.")
         else:
-            self.review_output.insert(END, "\nNo screenshots saved for this recording.\n")
-            self.review_image_label.configure(image="", text="No captured frames.")
+            self.review_output.insert(END, "\nNo screenshots saved for this recording. Record again with screenshot frames enabled.\n")
+            self.review_image_label.configure(image="", text="No replay screenshots saved.")
         self.review_timeline.delete("1.0", END)
         for event in self.review_events:
             self.review_timeline.insert(END, event_line(event) + "\n")
@@ -2128,6 +2985,9 @@ class CodeHubApp:
             self.load_review_recording()
         if not self.review_events:
             return
+
+        # Screenshot/event preview is the default again. Open Video is separate.
+
         if self.review_playing and self.review_paused:
             self.review_paused = False
             return
@@ -2359,19 +3219,15 @@ class CodeHubApp:
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     creationflags=hidden_process_flags())
             elif path.suffix.lower() == ".ahk":
-                ahk = find_ahk_exe()
-                if ahk:
-                    proc = subprocess.Popen(
-                        [ahk, str(path)], cwd=str(path.parent),
-                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                        creationflags=hidden_process_flags())
-                else:
-                    messagebox.showwarning(APP_NAME, "AutoHotkey not found. Opening file normally.")
-                    proc = subprocess.Popen(
-                        ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
-                         f"Start-Process -FilePath {json.dumps(str(path))} -Wait"],
-                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                        creationflags=hidden_process_flags())
+                version = str(self.ahk_version.get() or "2")
+                ahk = self.selected_ahk_exe(version)
+                if not ahk:
+                    self.missing_ahk_dialog(version, f"run {path.name}")
+                    return
+                proc = subprocess.Popen(
+                    [ahk, str(path)], cwd=str(path.parent),
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=hidden_process_flags())
             else:
                 proc = subprocess.Popen(
                     ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
@@ -2549,23 +3405,90 @@ class CodeHubApp:
             self.editor_path.set(str(new_path))
         self.refresh_files()
 
+    def cached_recordings_for_file(self, path):
+        """Return indexes of cached recording entries that point at this exported script."""
+        matches = []
+        try:
+            target = Path(path).resolve()
+        except Exception:
+            target = Path(path)
+        for i, rec in enumerate(self.recordings.get("recordings", [])):
+            ep = rec.get("export_path", "")
+            if not ep:
+                continue
+            try:
+                if Path(ep).resolve() == target:
+                    matches.append(i)
+            except Exception:
+                if str(ep).lower() == str(path).lower():
+                    matches.append(i)
+        return matches
+
     def delete_selected_file(self):
         path = self.selected_file_path()
         if not path:
             return
+        path = Path(path)
         if self.current_editor_file == path and self.editor_dirty and not self.confirm_unsaved_editor():
             return
-        if messagebox.askyesno(APP_NAME, f"Delete script file?\n{path}"):
-            try:
-                path.unlink()
-            except Exception as e:
-                messagebox.showerror(APP_NAME, f"Could not delete:\n{e}")
+
+        cached_indexes = self.cached_recordings_for_file(path)
+        delete_cached = False
+        if cached_indexes:
+            names = []
+            for i in cached_indexes:
+                try:
+                    names.append(self.recordings["recordings"][i].get("name", f"Recording {i + 1}"))
+                except Exception:
+                    names.append(f"Recording {i + 1}")
+            result = messagebox.askyesnocancel(
+                APP_NAME,
+                "Delete this script file?\n\n"
+                f"{path}\n\n"
+                "This file is also linked to cached recording data:\n"
+                + "\n".join(f"• {name}" for name in names)
+                + "\n\nYes = delete script AND cached recording data\n"
+                  "No = delete script file only\n"
+                  "Cancel = do nothing",
+            )
+            if result is None:
                 return
-            if self.current_editor_file == path:
-                self.current_editor_file = None
-                self.editor.delete("1.0", END)
-                self.editor_path.set("No file open")
-            self.refresh_files()
+            delete_cached = bool(result)
+        else:
+            result = messagebox.askyesnocancel(
+                APP_NAME,
+                f"Delete script file?\n\n{path}\n\n"
+                "Yes = delete script file\n"
+                "No = do nothing\n"
+                "Cancel = do nothing",
+            )
+            if result is None or result is False:
+                return
+
+        try:
+            path.unlink()
+        except Exception as e:
+            messagebox.showerror(APP_NAME, f"Could not delete script file:\n{e}")
+            return
+
+        if delete_cached and cached_indexes:
+            try:
+                for i in sorted(cached_indexes, reverse=True):
+                    self.recordings["recordings"].pop(i)
+                write_json(RECORDINGS_PATH, self.recordings)
+            except Exception as e:
+                messagebox.showwarning(APP_NAME, f"Script was deleted, but cached recording data could not be removed:\n{e}")
+
+        if self.current_editor_file == path:
+            self.current_editor_file = None
+            self.current_editor_saved_text = ""
+            self.editor_dirty = False
+            self.editor.delete("1.0", END)
+            self.editor_path.set("No file open")
+
+        self.refresh_recordings()
+        self.refresh_files()
+        self.status.set(f"Deleted {path.name}")
 
     def open_script(self):
         if not self.confirm_unsaved_editor():
@@ -2596,23 +3519,61 @@ class CodeHubApp:
 
     def save_script(self, show_message=True):
         if not self.current_editor_file:
-            self.save_script_as()
-            return
-        with open(self.current_editor_file, "w", encoding="utf-8") as f:
-            f.write(self.editor_text())
-        self.mark_editor_saved()
-        self.refresh_files()
-        if show_message:
-            messagebox.showinfo(APP_NAME, f"Saved:\n{self.current_editor_file}")
+            return self.save_script_as(show_message=show_message)
 
-    def save_script_as(self):
-        path = filedialog.asksaveasfilename(
-            initialdir=str(resolve_app_path(self.export_dir_var.get())),
-            filetypes=[("Scripts", "*.py *.ahk *.txt"), ("All files", "*.*")])
-        if not path:
-            return
-        self.current_editor_file = Path(path)
-        self.save_script()
+        path = Path(self.current_editor_file)
+        text = self.editor_text()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(text)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+
+            # Verify the disk file actually matches the editor before saying it saved.
+            try:
+                saved_text = path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                saved_text = None
+            if saved_text is not None and saved_text != text:
+                raise OSError("Save verification failed: file on disk did not match the editor text.")
+
+            self.current_editor_file = path
+            self.mark_editor_saved()
+            self.refresh_files()
+            self.status.set(f"Saved {path.name}")
+            if show_message:
+                messagebox.showinfo(APP_NAME, f"Saved:\n{path}")
+            return True
+        except Exception as e:
+            messagebox.showerror(APP_NAME, f"Could not save script:\n{path}\n\n{e}")
+            return False
+
+    def save_script_as(self, show_message=True):
+        while True:
+            path = filedialog.asksaveasfilename(
+                initialdir=str(resolve_app_path(self.export_dir_var.get())),
+                defaultextension=".py",
+                filetypes=[("Scripts", "*.py *.ahk *.txt"), ("All files", "*.*")])
+            if not path:
+                return False
+
+            path = Path(path)
+            if path.exists():
+                result = messagebox.askyesnocancel(
+                    APP_NAME,
+                    f"This file already exists:\n{path}\n\nYes = overwrite it\nNo = choose a different name\nCancel = stop saving",
+                )
+                if result is None:
+                    return False
+                if result is False:
+                    continue
+
+            self.current_editor_file = path
+            return self.save_script(show_message=show_message)
 
     def insert_notes(self):
         prefix = ";" if self.current_editor_file and Path(self.current_editor_file).suffix.lower() == ".ahk" else "#"
@@ -2974,35 +3935,136 @@ root.mainloop()
         if value:
             self.load_script(Path(value))
 
+    def builder_canvas_metrics(self):
+        canvas = self.builder_canvas
+        w = max(520, canvas.winfo_width() or 720)
+        h = max(360, canvas.winfo_height() or 460)
+        origin_x = 18
+        origin_y = 40
+        scale_x = (w - 36) / 520
+        scale_y = (h - 58) / 360
+        return w, h, origin_x, origin_y, scale_x, scale_y
+
+    def builder_block_canvas_rect(self, block):
+        _w, _h, ox, oy, sx, sy = self.builder_canvas_metrics()
+        x = ox + block["x"] * sx
+        y = oy + block["y"] * sy
+        bw = max(36, block["w"] * sx)
+        bh = max(18, block["h"] * sy)
+        return x, y, x + bw, y + bh
+
+    def builder_block_at_canvas(self, cx, cy):
+        for index in range(len(self.builder_blocks) - 1, -1, -1):
+            x1, y1, x2, y2 = self.builder_block_canvas_rect(self.builder_blocks[index])
+            if x1 <= cx <= x2 and y1 <= cy <= y2:
+                return index, x1, y1
+        return None, 0, 0
+
+    def builder_canvas_press(self, event):
+        index, x1, y1 = self.builder_block_at_canvas(event.x, event.y)
+        self.builder_selected_index = index
+        self.builder_drag_offset = (event.x - x1, event.y - y1)
+        self.builder_draw_preview()
+
+    def builder_canvas_drag(self, event):
+        if self.builder_selected_index is None:
+            return
+        _w, _h, ox, oy, sx, sy = self.builder_canvas_metrics()
+        dx, dy = self.builder_drag_offset
+        block = self.builder_blocks[self.builder_selected_index]
+        nx = int(max(0, min(520 - block["w"], (event.x - dx - ox) / sx)))
+        ny = int(max(0, min(360 - block["h"], (event.y - dy - oy) / sy)))
+        block["x"] = nx
+        block["y"] = ny
+        self.builder_x.set(str(nx))
+        self.builder_y.set(str(ny))
+        self.builder_refresh_list()
+
+    def builder_canvas_release(self, _event=None):
+        if self.builder_selected_index is not None:
+            self.builder_generate()
+        self.builder_selected_index = None
+        self.builder_drag_offset = (0, 0)
+        self.builder_draw_preview()
+
+    def builder_choose_background(self):
+        path = filedialog.askopenfilename(
+            title="Choose sandbox background image",
+            filetypes=[("Images", "*.png;*.jpg;*.jpeg;*.webp;*.bmp"), ("All files", "*.*")],
+        )
+        if path:
+            self.builder_background_image.set(path)
+            self.save_permissions()
+            self.builder_draw_preview()
+
+    def builder_clear_background(self):
+        self.builder_background_image.set("")
+        self.builder_background_photo = None
+        self.save_permissions()
+        self.builder_draw_preview()
+
+    def builder_take_background_screenshot(self):
+        try:
+            import mss
+            from PIL import Image
+            bg_dir = DATA_DIR / "builder_backgrounds"
+            bg_dir.mkdir(parents=True, exist_ok=True)
+            path = bg_dir / f"screen_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            with mss.mss() as grabber:
+                monitor = grabber.monitors[1]
+                shot = grabber.grab(monitor)
+                img = Image.frombytes("RGB", shot.size, shot.rgb)
+                img.save(path)
+            self.builder_background_image.set(str(path))
+            self.save_permissions()
+            self.builder_draw_preview()
+            self.status.set("Builder background screenshot loaded")
+        except Exception as e:
+            messagebox.showerror(APP_NAME, f"Could not take screenshot background. Install mss/Pillow if needed.\n\n{e}")
+
     def builder_draw_preview(self):
         if not hasattr(self, "builder_canvas"):
             return
         canvas = self.builder_canvas
         canvas.delete("all")
-        w = max(320, canvas.winfo_width() or 360)
-        h = max(220, canvas.winfo_height() or 250)
-        canvas.create_rectangle(0, 0, w, h, fill="#090909", outline="")
-        canvas.create_rectangle(8, 8, w - 8, h - 8, fill="#0f0f0f", outline="#2a2a2a", width=1)
-        canvas.create_text(18, 18, text="CodeHub UI Preview", fill="#e8f0f8", anchor="nw", font=("Segoe UI", 10, "bold"))
-        scale_x = (w - 36) / 520
-        scale_y = (h - 46) / 360
-        for block in self.builder_blocks:
-            x = 18 + block["x"] * scale_x
-            y = 40 + block["y"] * scale_y
-            bw = max(36, block["w"] * scale_x)
-            bh = max(18, block["h"] * scale_y)
+        w, h, ox, oy, scale_x, scale_y = self.builder_canvas_metrics()
+
+        bg_path = self.builder_background_image.get().strip() if hasattr(self, "builder_background_image") else ""
+        if bg_path and Image is not None and ImageTk is not None and Path(bg_path).exists():
+            try:
+                img = Image.open(bg_path).convert("RGB")
+                img.thumbnail((w, h))
+                self.builder_background_photo = ImageTk.PhotoImage(img)
+                canvas.create_rectangle(0, 0, w, h, fill="#050505", outline="")
+                canvas.create_image(w // 2, h // 2, image=self.builder_background_photo, anchor="center")
+                canvas.create_rectangle(0, 0, w, h, fill="", outline=C["border"], width=1)
+            except Exception:
+                canvas.create_rectangle(0, 0, w, h, fill="#090909", outline="")
+        else:
+            canvas.create_rectangle(0, 0, w, h, fill="#090909", outline="")
+            canvas.create_rectangle(8, 8, w - 8, h - 8, fill="#0f0f0f", outline="#2a2a2a", width=1)
+
+        canvas.create_text(18, 18, text="Drag blocks here  •  520x360 generated UI sandbox", fill=C["text"], anchor="nw", font=("Segoe UI", 10, "bold"))
+
+        for i, block in enumerate(self.builder_blocks):
+            x, y, x2, y2 = self.builder_block_canvas_rect(block)
+            bw = x2 - x
+            bh = y2 - y
             kind = block["kind"]
+            selected = i == self.builder_selected_index
             fill = "#e8e8e8" if kind == "Button" else "#111111"
             fg = "#000000" if kind == "Button" else "#e8f0f8"
-            outline = "#303030"
+            outline = C["accent"] if selected else "#303030"
+            width = 3 if selected else 1
             if kind == "Slider":
+                canvas.create_rectangle(x, y, x + bw, y + bh, fill="#111111", outline=outline, width=width)
                 canvas.create_line(x + 8, y + bh / 2, x + bw - 8, y + bh / 2, fill=C["cyan"], width=3)
                 canvas.create_oval(x + bw / 2 - 5, y + bh / 2 - 5, x + bw / 2 + 5, y + bh / 2 + 5, fill="#e8e8e8", outline="")
             else:
-                canvas.create_rectangle(x, y, x + bw, y + bh, fill=fill, outline=outline, width=1)
+                canvas.create_rectangle(x, y, x + bw, y + bh, fill=fill, outline=outline, width=width)
                 text = block["text"][:24]
                 if kind == "Checkbox":
-                    canvas.create_rectangle(x + 6, y + 6, x + 18, y + 18, fill="#090909", outline=C["text2"])
+                    canvas.create_rectangle(x + 6, y + 6, x + 18, y + 18, fill="#090909", outline=C["text2"] if not selected else C["accent"])
                     canvas.create_text(x + 24, y + bh / 2, text=text, fill=fg, anchor="w", font=("Segoe UI", 8))
                 else:
                     canvas.create_text(x + bw / 2, y + bh / 2, text=text, fill=fg, font=("Segoe UI", 8, "bold" if kind == "Button" else "normal"))
@@ -3015,6 +4077,7 @@ root.mainloop()
             "; Built with CodeHub Code Builder.",
             "; Edit block positions by changing x/y/w/h values below.",
             "ui := Gui('+AlwaysOnTop', 'CodeHub Built UI')",
+            f"; Preview background image: {self.builder_background_image.get() if hasattr(self, 'builder_background_image') else ''}",
             "ui.BackColor := '101820'",
             "ui.SetFont('s9 cE8F0F8', 'Segoe UI')",
         ]
@@ -3047,6 +4110,7 @@ root.mainloop()
             "root.title('CodeHub Built UI')",
             "root.geometry('520x360')",
             "root.configure(bg='#101820')",
+            f"# Preview background image: {self.builder_background_image.get() if hasattr(self, 'builder_background_image') else ''}",
         ]
         for i, b in enumerate(self.builder_blocks, 1):
             text = b["text"].replace("\\", "\\\\").replace("'", "\\'")
@@ -3069,92 +4133,274 @@ root.mainloop()
 
     def python_to_ahk(self, source):
         notes = []
-        lines = ["#Requires AutoHotkey v2.0", "#SingleInstance Force", "",
-                 "global running := false", "",
-                 "F1::{\n    global running\n    running := true\n}", "",
-                 "F2::{\n    global running\n    running := false\n}", "",
-                 "Numpad5::ExitApp", "",
-                 "; Converted by CodeHub. Review coordinates and timing before use."]
+        body = []
         for raw in source.splitlines():
             stripped = raw.strip()
             if not stripped:
-                lines.append(""); continue
-            indent = "    " if raw.startswith((" ","\t")) else ""
+                body.append("")
+                continue
             converted = None
             if stripped.startswith("#"):
                 converted = "; " + stripped.lstrip("#").strip()
-                notes.append("converted Python comments to AHK comments")
+                notes.append("comments converted")
             elif re.match(r"time\.sleep\(([^)]+)\)", stripped):
                 val = re.findall(r"time\.sleep\(([^)]+)\)", stripped)[0]
-                try: ms = int(float(val)*1000)
-                except: ms = 100
+                try:
+                    ms = int(float(val) * 1000)
+                except Exception:
+                    ms = 100
                 converted = f"Sleep({ms})"
-                notes.append("converted time.sleep to Sleep")
-            elif "mouse.position" in stripped and "=" in stripped:
+                notes.append("time.sleep converted to Sleep")
+            elif re.search(r"mouse\.position\s*=", stripped):
                 nums = re.findall(r"-?\d+", stripped)
-                converted = f"MouseMove({nums[0]}, {nums[1]}, 0)" if len(nums)>=2 else "; TODO: MouseMove(x, y, 0)"
-                notes.append("converted mouse.position to MouseMove")
-            elif re.search(r"mouse\.(click|press|release)", stripped):
+                converted = f"MouseMove({nums[0]}, {nums[1]}, 0)" if len(nums) >= 2 else "; TODO: MouseMove(x, y, 0)"
+                notes.append("mouse.position converted")
+            elif "mouse.click" in stripped:
                 nums = re.findall(r"-?\d+", stripped)
-                action = "Up" if "release" in stripped else "Down" if "press" in stripped else ""
-                coord = f", {nums[0]}, {nums[1]}" if len(nums)>=2 else ""
-                converted = f"Click(\"{action}\"{coord})" if action else f"Click({coord.lstrip(', ')})"
-                notes.append("converted mouse click/press/release")
-            elif re.search(r"keyboard\.(type|press|release)", stripped) or ".press(" in stripped or ".type(" in stripped:
-                text = re.findall(r"[\"'](.+?)[\"']", stripped)
-                converted = f"Send({text[0]!r})".replace("'",'"') if text else "; TODO: Send key/text"
-                notes.append("converted keyboard call to Send")
-            elif stripped.startswith(("import ","from ","def ","class ")):
+                converted = f"Click({nums[0]}, {nums[1]})" if len(nums) >= 2 else "Click()"
+                notes.append("mouse.click converted")
+            elif "mouse.press" in stripped:
+                nums = re.findall(r"-?\d+", stripped)
+                converted = f"Click(\"Down\", {nums[0]}, {nums[1]})" if len(nums) >= 2 else "Click(\"Down\")"
+                notes.append("mouse.press converted")
+            elif "mouse.release" in stripped:
+                nums = re.findall(r"-?\d+", stripped)
+                converted = f"Click(\"Up\", {nums[0]}, {nums[1]})" if len(nums) >= 2 else "Click(\"Up\")"
+                notes.append("mouse.release converted")
+            elif "keyboard.type" in stripped or ".type(" in stripped:
+                found = re.findall(r"[\"'](.+?)[\"']", stripped)
+                converted = f"Send({found[0]!r})".replace("'", '"') if found else "; TODO: Send(\"text\")"
+                notes.append("keyboard.type converted")
+            elif "keyboard.press" in stripped or ".press(" in stripped:
+                found = re.findall(r"[\"'](.+?)[\"']", stripped)
+                converted = f"Send(\"{{{found[0]} down}}\")" if found else "; TODO: Send(\"{Key down}\")"
+                notes.append("keyboard.press converted")
+            elif "keyboard.release" in stripped or ".release(" in stripped:
+                found = re.findall(r"[\"'](.+?)[\"']", stripped)
+                converted = f"Send(\"{{{found[0]} up}}\")" if found else "; TODO: Send(\"{Key up}\")"
+                notes.append("keyboard.release converted")
+            elif stripped.startswith(("import ", "from ", "def ", "class ", "if __name__")):
                 converted = "; " + stripped
             else:
                 converted = "; TODO: " + stripped
-            lines.append(indent + converted)
-        return "\n".join(lines), sorted(set(notes or ["wrapped Python snippet in AHK hotkey shell"]))
+            body.append("    " + converted if converted else "")
+
+        lines = [
+            "#Requires AutoHotkey v2.0",
+            "#SingleInstance Force",
+            "; Converted by CodeHub. Review coordinates/timing before use.",
+            "global running := false",
+            "CreateWatermark()",
+            "ShowCodeHubLoader(1300, 'Converted Python -> AutoHotkey v2')",
+            "",
+            "F1::",
+            "{",
+            "    global running",
+            "    running := true",
+            "    PlayMacro()",
+            "}",
+            "",
+            "F2::",
+            "{",
+            "    global running",
+            "    running := false",
+            "}",
+            "",
+            "Numpad5::ExitApp",
+            "",
+            "PlayMacro()",
+            "{",
+            "    global running",
+        ]
+        lines.extend(body or ["    ; TODO: paste Python code to convert"])
+        lines.extend([
+            "    running := false",
+            "}",
+            "",
+            "ShowCodeHubLoader(durationMs := 900, title := 'Loading macro')",
+            "{",
+            "    loader := Gui('+AlwaysOnTop -Caption +ToolWindow')",
+            "    loader.BackColor := '081019'",
+            "    loader.SetFont('s10 cEAF6FF', 'Segoe UI')",
+            "    loader.AddText('w320 Center', 'AutoHotkey v2 · ' title)",
+            "    loader.SetFont('s8 c8FD9FF', 'Segoe UI')",
+            "    status := loader.AddText('w320 Center y+6', 'CodeHub converter loader')",
+            "    bar := loader.AddProgress('w320 h10 y+10 Background182434 c33FF66 Range0-100', 0)",
+            "    x := (A_ScreenWidth - 356) // 2",
+            "    y := (A_ScreenHeight - 118) // 2",
+            "    loader.Show('NoActivate x' x ' y' y ' w356 h118')",
+            "    steps := 32",
+            "    delay := Max(10, Floor(durationMs / steps))",
+            "    Loop steps {",
+            "        bar.Value := Floor((A_Index / steps) * 100)",
+            "        status.Text := 'Loading... ' bar.Value '%'",
+            "        Sleep(delay)",
+            "    }",
+            "    Sleep(200)",
+            "    loader.Destroy()",
+            "}",
+            "",
+            "CreateWatermark()",
+            "{",
+            "    wm := Gui('+AlwaysOnTop -Caption +ToolWindow +E0x20')",
+            "    wm.BackColor := '101820'",
+            "    wm.SetFont('s8 cD6DEE8', 'Segoe UI')",
+            "    wm.AddText('w190 Center', 'Made by Cat · AutoHotkey v2')",
+            "    WinSetTransparent(70, wm.Hwnd)",
+            "    x := A_ScreenWidth - 210",
+            "    wm.Show('NoActivate x' x ' y4 w200 h28')",
+            "}",
+        ])
+        return "\n".join(lines), sorted(set(notes or ["wrapped Python snippet in runnable AHK v2 shell"]))
 
     def ahk_to_python(self, source):
         notes = []
-        lines = ["# Converted by CodeHub. Review coordinates and timing before use.",
-                 "import time",
-                 "from pynput.keyboard import Controller as KeyboardController",
-                 "from pynput.mouse import Button, Controller as MouseController",
-                 "", "keyboard = KeyboardController()", "mouse = MouseController()",
-                 "running = False", ""]
+        body = []
         for raw in source.splitlines():
             stripped = raw.strip()
             if not stripped:
-                lines.append(""); continue
+                body.append("")
+                continue
+            low = stripped.lower()
             converted = None
             if stripped.startswith(";"):
                 converted = "# " + stripped.lstrip(";").strip()
-                notes.append("converted AHK comments to Python comments")
-            elif stripped.lower().startswith(("#requires","#singleinstance")):
+                notes.append("comments converted")
+            elif low.startswith(("#requires", "#singleinstance", "global ", "return")) or stripped in ("{", "}") or stripped.endswith("::"):
                 converted = "# " + stripped
-            elif re.match(r"Sleep\(?\s*(\d+)\s*\)?", stripped, re.I):
+            elif re.match(r"sleep[,\( ]+\s*(\d+)", stripped, re.I):
                 ms = int(re.findall(r"\d+", stripped)[0])
                 converted = f"time.sleep({ms/1000:.3f})"
-                notes.append("converted Sleep to time.sleep")
-            elif re.match(r"MouseMove\(", stripped, re.I):
+                notes.append("Sleep converted")
+            elif low.startswith("mousemove"):
                 nums = re.findall(r"-?\d+", stripped)
-                converted = f"mouse.position = ({nums[0]}, {nums[1]})" if len(nums)>=2 else "# TODO: mouse.position = (x, y)"
-                notes.append("converted MouseMove to mouse.position")
-            elif re.match(r"Click\(", stripped, re.I):
+                converted = f"mouse.position = ({nums[0]}, {nums[1]})" if len(nums) >= 2 else "# TODO: mouse.position = (x, y)"
+                notes.append("MouseMove converted")
+            elif low.startswith("click"):
                 nums = re.findall(r"-?\d+", stripped)
-                if "down" in stripped.lower(): converted = "mouse.press(Button.left)"
-                elif "up" in stripped.lower(): converted = "mouse.release(Button.left)"
-                elif len(nums)>=2: converted = f"mouse.position = ({nums[0]}, {nums[1]})\nmouse.click(Button.left)"
-                else: converted = "mouse.click(Button.left)"
-                notes.append("converted Click to pynput mouse action")
-            elif stripped.lower().startswith("send"):
-                text = re.findall(r"[\"'](.+?)[\"']|\{(.+?)\}", stripped)
-                val = next((a or b for a,b in text),"")
-                converted = f"keyboard.type({val!r})" if val else "# TODO: keyboard press/type"
-                notes.append("converted Send to keyboard.type")
-            elif stripped.endswith("::") or stripped in ("{","}"):
-                converted = "# " + stripped
+                if "down" in low:
+                    converted = "mouse.press(Button.left)"
+                elif "up" in low:
+                    converted = "mouse.release(Button.left)"
+                elif len(nums) >= 2:
+                    converted = f"mouse.position = ({nums[0]}, {nums[1]})\n    mouse.click(Button.left)"
+                else:
+                    converted = "mouse.click(Button.left)"
+                notes.append("Click converted")
+            elif low.startswith("send"):
+                braced = re.findall(r"\{(.+?)\}", stripped)
+                quoted = re.findall(r"[\"'](.+?)[\"']", stripped)
+                val = quoted[0] if quoted else (braced[0] if braced else stripped.split(None, 1)[-1].replace(',', '').strip())
+                if val:
+                    converted = f"keyboard.type({val!r})"
+                else:
+                    converted = "# TODO: keyboard.type('text')"
+                notes.append("Send converted")
+            elif low.startswith("tooltip"):
+                converted = "print(" + repr(stripped) + ")"
             else:
                 converted = "# TODO: " + stripped
-            lines.append(converted)
-        return "\n".join(lines), sorted(set(notes or ["wrapped AHK snippet in Python macro shell"]))
+            body.append("    " + converted.replace("\n", "\n    "))
+
+        lines = [
+            '"""Converted by CodeHub. Review coordinates/timing before use."""',
+            "import json",
+            "import math",
+            "import os",
+            "import threading",
+            "import time",
+            "import tkinter as tk",
+            "from pynput import keyboard as pynput_keyboard",
+            "from pynput.keyboard import Controller as KeyboardController, Key",
+            "from pynput.mouse import Button, Controller as MouseController",
+            "",
+            "SCRIPT_NAME = 'Converted_AHK_Macro'",
+            "running = False",
+            "keyboard = KeyboardController()",
+            "mouse = MouseController()",
+            "",
+            "class CodeHubLoader:",
+            "    def __init__(self, title='CodeHub Python Loader', duration_ms=1400):",
+            "        self.title = title",
+            "        self.duration_ms = max(900, int(duration_ms))",
+            "        self.root = tk.Tk()",
+            "        self.root.overrideredirect(True)",
+            "        self.root.attributes('-topmost', True)",
+            "        self.root.configure(bg='#07101F')",
+            "        self.root.geometry(self._center_geometry(470, 210))",
+            "        self.canvas = tk.Canvas(self.root, width=470, height=210, bg='#07101F', highlightthickness=0)",
+            "        self.canvas.pack(fill='both', expand=True)",
+            "    def _center_geometry(self, w, h):",
+            "        self.root.update_idletasks()",
+            "        return f'{w}x{h}+{(self.root.winfo_screenwidth()-w)//2}+{(self.root.winfo_screenheight()-h)//2}'",
+            "    def run(self):",
+            "        steps = 40",
+            "        for i in range(steps + 1):",
+            "            pct = i / steps",
+            "            self.canvas.delete('all')",
+            "            self.canvas.create_rectangle(0, 0, 470, 210, fill='#07101F', outline='')",
+            "            self.canvas.create_text(235, 35, text='CodeHub Python Loader', fill='#57A6FF', font=('Segoe UI', 16, 'bold'))",
+            "            self.canvas.create_text(235, 65, text=self.title, fill='#DDEBFF', font=('Segoe UI', 10))",
+            "            for n in range(14):",
+            "                a = i * 0.25 + n * 0.45",
+            "                x = 235 + int(math.cos(a) * (25 + n % 4 * 8))",
+            "                y = 130 + int(math.sin(a) * (25 + n % 4 * 8))",
+            "                self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='#57A6FF', outline='')",
+            "            self.canvas.create_rectangle(42, 172, 428, 186, outline='#24496E', width=1)",
+            "            self.canvas.create_rectangle(44, 174, 44 + int(382 * pct), 184, fill='#57A6FF', outline='')",
+            "            self.canvas.create_text(235, 199, text=f'Python engine initializing... {int(pct*100)}%', fill='#9FCBFF', font=('Consolas', 9))",
+            "            self.root.update()",
+            "            time.sleep(self.duration_ms / 1000 / steps)",
+            "        self.root.destroy()",
+            "",
+            "class Watermark:",
+            "    def __init__(self):",
+            "        self.root = tk.Tk()",
+            "        self.root.overrideredirect(True)",
+            "        self.root.attributes('-topmost', True)",
+            "        self.root.attributes('-alpha', 0.46)",
+            "        label = tk.Label(self.root, text='Made by Cat · Python', bg='#101820', fg='#57A6FF', font=('Segoe UI', 7, 'bold'), padx=7, pady=3)",
+            "        label.pack()",
+            "        self.root.update_idletasks()",
+            "        x = self.root.winfo_screenwidth() - self.root.winfo_width() - 6",
+            "        self.root.geometry(f'+{x}+4')",
+            "    def show(self):",
+            "        threading.Thread(target=self.root.mainloop, daemon=False).start()",
+            "",
+            "def play_macro():",
+            "    global running",
+            "    running = True",
+            "    CodeHubLoader('Converted AutoHotkey -> Python', 1300).run()",
+        ]
+        lines.extend(body or ["    # TODO: paste AHK code to convert"])
+        lines.extend([
+            "    running = False",
+            "",
+            "def start_playback():",
+            "    threading.Thread(target=play_macro, daemon=True).start()",
+            "",
+            "def stop_playback():",
+            "    global running",
+            "    running = False",
+            "",
+            "def on_press(key):",
+            "    if key == Key.f1:",
+            "        start_playback()",
+            "    elif key == Key.f2:",
+            "        stop_playback()",
+            "    elif getattr(key, 'vk', None) == 101:",
+            "        stop_playback()",
+            "        return False",
+            "",
+            "if __name__ == '__main__':",
+            "    CodeHubLoader('Starting converted macro', 1600).run()",
+            "    WATERMARK = Watermark()",
+            "    WATERMARK.show()",
+            "    print('F1 start | F2 stop | Numpad 5 exit')",
+            "    with pynput_keyboard.Listener(on_press=on_press) as listener:",
+            "        listener.join()",
+        ])
+        return "\n".join(lines), sorted(set(notes or ["wrapped AHK snippet in runnable Python shell with loader/watermark"]))
 
     def normalize_macro_script(self, source, is_ahk):
         notes = []
@@ -3246,13 +4492,89 @@ root.mainloop()
             write_json(SETTINGS_PATH, self.settings)
             self.refresh_files()
 
+    def choose_ahk_path(self, version):
+        path = filedialog.askopenfilename(
+            title=f"Choose AutoHotkey v{version} executable",
+            filetypes=[("AutoHotkey executable", "AutoHotkey*.exe"), ("Executable", "*.exe"), ("All files", "*.*")],
+            parent=self.root,
+        )
+        if not path:
+            return
+        detected = detect_ahk_version(path)
+        if detected and detected != str(version):
+            ok = messagebox.askyesno(
+                APP_NAME,
+                f"That executable looks like AutoHotkey v{detected}, not v{version}.\n\nUse it anyway?",
+                parent=self.root,
+            )
+            if not ok:
+                return
+        if str(version) == "1":
+            self.ahk_path_v1.set(path)
+        else:
+            self.ahk_path_v2.set(path)
+        self.save_permissions()
+
+    def autodetect_ahk_paths(self):
+        v2 = find_ahk_exe("2")
+        v1 = find_ahk_exe("1")
+        if v2:
+            self.ahk_path_v2.set(v2)
+        if v1:
+            self.ahk_path_v1.set(v1)
+        if not v2 and not v1:
+            messagebox.showerror(APP_NAME, "AutoHotkey was not found. Install AutoHotkey v2 or v1.1, then restart CodeHub.", parent=self.root)
+            return
+        if v2:
+            self.ahk_version.set("2")
+        elif v1:
+            self.ahk_version.set("1")
+        self.save_permissions()
+        messagebox.showinfo(APP_NAME, "AutoHotkey detection complete.", parent=self.root)
+
+
+    def missing_ahk_dialog(self, version=None, action="use AutoHotkey scripts"):
+        version = str(version or self.ahk_version.get() or "").strip()
+        missing = describe_missing_ahk(version)
+        detail = (
+            f"{missing}\n\n"
+            f"CodeHub can still open and Python scripts still work.\n\n"
+            f"Missing: AutoHotkey v{version if version in ('1','2') else '1 or v2'}\n"
+            f"Action blocked: {action}\n\n"
+            "Install AutoHotkey, restart CodeHub, then try again.\n\n"
+            "Open the AutoHotkey download page now?"
+        )
+        open_site = messagebox.askyesno(APP_NAME, detail, parent=self.root)
+        if open_site:
+            webbrowser.open(ahk_install_url(version))
+
+    def ensure_ahk_available_for_action(self, version=None, action="use AutoHotkey"):
+        version = str(version or self.ahk_version.get() or "2")
+        if self.selected_ahk_exe(version):
+            return True
+        self.missing_ahk_dialog(version, action)
+        return False
+
+    def selected_ahk_exe(self, version=None):
+        version = str(version or self.ahk_version.get() or "2")
+        custom = self.ahk_path_v2.get() if version == "2" else self.ahk_path_v1.get()
+        ahk = find_ahk_exe(version, custom)
+        return ahk
+
     def save_permissions(self):
         self.settings["ai_can_edit"] = self.ai_can_edit.get()
         self.settings["ai_can_delete"] = self.ai_can_delete.get()
         self.settings["ai_can_run"] = self.ai_can_run.get()
+        self.settings["ahk_version"] = self.ahk_version.get()
+        self.settings["ahk_path_v1"] = self.ahk_path_v1.get().strip()
+        self.settings["ahk_path_v2"] = self.ahk_path_v2.get().strip()
         self.settings["record_screenshots"] = self.record_screenshots.get()
+        self.settings["record_replay_video"] = self.record_replay_video.get()
+        if hasattr(self, "builder_background_image"):
+            self.settings["builder_background_image"] = self.builder_background_image.get().strip()
         self.settings["auto_update"] = self.auto_update.get()
         fps = max(1, min(MAX_REPLAY_FPS, self.builder_number(self.review_fps.get(), 60)))
+        self.review_fps.set(str(fps))
         self.settings["review_capture_fps"] = fps
         self.settings["review_capture_interval_ms"] = max(1, int(1000 / fps))
         write_json(SETTINGS_PATH, self.settings)
@@ -3357,6 +4679,16 @@ root.mainloop()
     """
 
         cmd_path.write_text(script, encoding="utf-8")
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ["attrib", "+h", str(cmd_path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=hidden_process_flags(),
+                )
+            except Exception:
+                pass
 
         subprocess.Popen(
             ["cmd.exe", "/c", "call", str(cmd_path)],
@@ -3422,6 +4754,16 @@ root.mainloop()
     """
 
         cmd_path.write_text(script, encoding="utf-8")
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ["attrib", "+h", str(cmd_path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=hidden_process_flags(),
+                )
+            except Exception:
+                pass
 
         subprocess.Popen(
             ["cmd.exe", "/c", "call", str(cmd_path)],
@@ -3433,36 +4775,84 @@ root.mainloop()
 
     def start_tutorial(self):
         self.tutorial_steps = [
-            ("Recorder", "Use F1 to start recording and F2 to stop. After stopping, name the macro and choose Python or AutoHotkey."),
-            ("Workspace", "Open scripts here. AI, converter, and builder edits are staged until you press Save."),
-            ("Tools", "Assistant, Converter, Code Builder, and Position Logger live here. Builder can preview UI blocks."),
-            ("Replay", "Load a recording, play/pause it, change speed, and adjust FPS for review screenshots."),
-            ("Settings", "Enable permissions, auto updates, replay FPS, and UI density here."),
+            (0, "Recorder", "This is where you record macros. Pick a mode, press F1 to start, then F2 to stop and save."),
+            (1, "Workspace", "This is your script editor. Open generated scripts, edit them, then press Save before running."),
+            (2, "Tools", "These helper tools can build code, convert code, find click positions, and assist with edits."),
+            (3, "Replay", "Load a recording here. Use Open Video for the smooth OpenCV replay, or screenshot frames as fallback."),
+            (4, "Help", "The Help tab has this tutorial, the HTML guide, and support links."),
+            (5, "Settings", "Settings controls themes, replay FPS, permissions, updates, and data paths. You can scroll this page now."),
         ]
         self.tutorial_index = 0
         self.show_tutorial_step()
 
+    def _destroy_tutorial_windows(self):
+        for attr in ("tutorial_panel", "tutorial_highlight"):
+            win = getattr(self, attr, None)
+            if win and win.winfo_exists():
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+            setattr(self, attr, None)
+
     def show_tutorial_step(self):
-        if hasattr(self, "tutorial_overlay") and self.tutorial_overlay and self.tutorial_overlay.winfo_exists():
-            self.tutorial_overlay.destroy()
-        title, body = self.tutorial_steps[self.tutorial_index]
-        overlay = Frame(self.root, bg="#030303")
-        overlay.place(x=0, y=0, relwidth=1, relheight=1)
-        overlay.lift()
-        overlay.bind("<Button>", lambda _: "break")
-        panel = Frame(overlay, bg="#0f0f0f", padx=28, pady=22, highlightbackground="#2a2a2a", highlightthickness=1)
-        panel.place(relx=0.5, rely=0.5, anchor="center")
-        ttk.Label(panel, text=f"Tutorial: {title}", style="LockPanel.TLabel").pack(anchor="w")
-        ttk.Label(panel, text=body, style="LockMuted.TLabel", wraplength=480, justify="left").pack(anchor="w", pady=(10, 16))
-        row = Frame(panel, bg="#0f0f0f")
+        self._destroy_tutorial_windows()
+        tab_index, title, body = self.tutorial_steps[self.tutorial_index]
+        try:
+            self.tabs.select(tab_index)
+        except Exception:
+            pass
+        self.root.update_idletasks()
+
+        # Highlight the real app area instead of covering the whole app.
+        target = self.tabs
+        try:
+            x = target.winfo_rootx() + 6
+            y = target.winfo_rooty() + 34
+            w = max(320, target.winfo_width() - 12)
+            h = max(220, target.winfo_height() - 40)
+        except Exception:
+            x = self.root.winfo_rootx() + 40
+            y = self.root.winfo_rooty() + 90
+            w = self.root.winfo_width() - 80
+            h = self.root.winfo_height() - 140
+
+        highlight = Toplevel(self.root)
+        highlight.overrideredirect(True)
+        highlight.attributes("-topmost", True)
+        try:
+            highlight.attributes("-transparentcolor", "#010101")
+        except Exception:
+            pass
+        highlight.configure(bg="#010101")
+        highlight.geometry(f"{w}x{h}+{x}+{y}")
+        canvas = Canvas(highlight, bg="#010101", highlightthickness=0)
+        canvas.pack(fill=BOTH, expand=True)
+        canvas.create_rectangle(4, 4, w - 5, h - 5, outline=C["accent"], width=4)
+        canvas.create_rectangle(10, 10, w - 11, h - 11, outline=C["yellow"], width=1)
+        self.tutorial_highlight = highlight
+
+        panel = Toplevel(self.root)
+        panel.overrideredirect(True)
+        panel.attributes("-topmost", True)
+        panel.configure(bg=C["panel2"])
+        if tab_index in (3, 4, 5):
+            px = self.root.winfo_rootx() + self.root.winfo_width() - 545
+            py = self.root.winfo_rooty() + self.root.winfo_height() - 205
+        else:
+            px = min(x + 28, self.root.winfo_rootx() + self.root.winfo_width() - 560)
+            py = min(y + 28, self.root.winfo_rooty() + self.root.winfo_height() - 210)
+        panel.geometry(f"520x178+{max(10, px)}+{max(10, py)}")
+        box = Frame(panel, bg=C["panel2"], padx=18, pady=14, highlightbackground=C["accent"], highlightthickness=1)
+        box.pack(fill=BOTH, expand=True)
+        ttk.Label(box, text=f"Tutorial {self.tutorial_index + 1}/{len(self.tutorial_steps)}: {title}", style="SectionTitle2.TLabel").pack(anchor="w")
+        ttk.Label(box, text=body, style="PanelMuted2.TLabel", wraplength=470, justify="left").pack(anchor="w", pady=(8, 12))
+        row = Frame(box, bg=C["panel2"])
         row.pack(fill=X)
         ttk.Button(row, text="Skip", style="Ghost.TButton", command=self.cancel_tutorial).pack(side=RIGHT, padx=(6, 0))
         ttk.Button(row, text="Next", style="Accent.TButton", command=self.next_tutorial_step).pack(side=RIGHT)
-        self.tutorial_overlay = overlay
-        try:
-            overlay.grab_set()
-        except Exception:
-            pass
+        self.tutorial_panel = panel
+        self.status.set(f"Tutorial: {title}")
 
     def next_tutorial_step(self):
         self.tutorial_index += 1
@@ -3473,16 +4863,10 @@ root.mainloop()
         self.show_tutorial_step()
 
     def cancel_tutorial(self):
-        if hasattr(self, "tutorial_overlay") and self.tutorial_overlay and self.tutorial_overlay.winfo_exists():
-            try:
-                self.tutorial_overlay.grab_release()
-            except Exception:
-                pass
-            self.tutorial_overlay.destroy()
-        self.tutorial_overlay = None
+        self._destroy_tutorial_windows()
 
     def open_help_html(self):
-        path = DATA_DIR / "CodeHub Help.html"
+        path = DATA_DIR / "Index.html"
         html = """<!doctype html>
 <html>
 <head>
@@ -3807,6 +5191,30 @@ CodeHub • Built by Catchallcat5382
     def open_discord_support(self):
         webbrowser.open("https://discord.gg/ZqC32Bn68P")
 
+
+    def pick_theme_color(self, var):
+        current = clamp_hex_color(var.get())
+        color = colorchooser.askcolor(color=current, parent=self.root, title="Choose CodeHub color")
+        if color and color[1]:
+            var.set(clamp_hex_color(color[1]))
+            self.theme_mode.set("custom")
+            self.save_ui_settings()
+
+    def refresh_basic_widget_colors(self, widget=None):
+        widget = widget or self.root
+        try:
+            cls = widget.winfo_class()
+            if cls in ("Frame", "TFrame", "Tk", "Toplevel"):
+                widget.configure(bg=C["bg"])
+            elif cls in ("Canvas",):
+                widget.configure(bg=C["bg2"], highlightbackground=C["border"])
+            elif cls in ("Text",):
+                widget.configure(bg=C["bg2"], fg=C["text"], insertbackground=C["text"], highlightbackground=C["border"])
+        except Exception:
+            pass
+        for child in widget.winfo_children():
+            self.refresh_basic_widget_colors(child)
+
     def save_ui_settings(self):
         try:
             size = int(self.ui_font_size.get())
@@ -3814,9 +5222,22 @@ CodeHub • Built by Catchallcat5382
             size = 9
         self.settings["ui_font_size"] = max(8, min(12, size))
         self.settings["ui_density"] = self.ui_density.get()
+        self.settings["theme_mode"] = self.theme_mode.get()
+        self.settings["custom_bg"] = clamp_hex_color(self.custom_bg.get(), "#050505")
+        self.settings["custom_panel"] = clamp_hex_color(self.custom_panel.get(), "#0B0B0B")
+        self.settings["custom_text"] = clamp_hex_color(self.custom_text.get(), "#E8F0F8")
+        self.settings["custom_accent"] = clamp_hex_color(self.custom_accent.get(), "#57A6FF")
+        self.custom_bg.set(self.settings["custom_bg"])
+        self.custom_panel.set(self.settings["custom_panel"])
+        self.custom_text.set(self.settings["custom_text"])
+        self.custom_accent.set(self.settings["custom_accent"])
+        apply_theme_to_palette(self.settings)
         write_json(SETTINGS_PATH, self.settings)
+        self.root.configure(bg=C["bg"])
         self._configure_styles()
-        self.status.set("UI settings saved")
+        self.refresh_basic_widget_colors()
+        self.status_bar.set_color(C["text3"])
+        self.status.set("UI/theme settings saved")
 
     def toggle_fullscreen(self):
         self.fullscreen.set(not self.fullscreen.get())
@@ -3827,6 +5248,7 @@ CodeHub • Built by Catchallcat5382
             return
         if self.is_recording:
             self.recorder.stop()
+        self.stop_replay_video_capture()
         self.stop_position_logging()
         if hasattr(self, "hotkey_listener"):
             self.hotkey_listener.stop()
@@ -3839,5 +5261,3 @@ CodeHub • Built by Catchallcat5382
 if __name__ == "__main__":
     startup_console()
     CodeHubApp().run()
-
-
