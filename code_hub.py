@@ -9,6 +9,7 @@ import threading
 import time
 import difflib
 import tempfile
+import textwrap
 import urllib.request
 import webbrowser
 from datetime import datetime
@@ -62,7 +63,7 @@ GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
 GITHUB_API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest/download/CodeHub.exe"
 BUILD_COMMIT = "local-build"
-BUILD_NUMBER = 2
+BUILD_NUMBER = 24
 MAX_REPLAY_FPS = 240
 REPLAY_FPS_CHOICES = ["15", "20", "24", "30", "60", "120", "144", "240"]
 
@@ -1454,6 +1455,7 @@ class CodeHubApp:
         self.review_video_paused = False
         self.review_video_thread = None
         self.review_audio_channel = None
+        self.review_audio_error = ""
         self.replay_video_thread = None
         self.replay_video_stop_event = None
         self.replay_audio_thread = None
@@ -2774,6 +2776,7 @@ class CodeHubApp:
         self.review_shots = []
         self.review_video_path = None
         self.review_audio_path = None
+        self.review_audio_error = ""
         self.review_video_meta = {}
         self.feed.delete("1.0", END)
         self.settings["default_export_kind"] = self.default_export_kind.get()
@@ -2826,6 +2829,7 @@ class CodeHubApp:
             "review_video": self.review_video_path or "",
             "review_video_meta": self.review_video_meta or {},
             "review_audio": self.review_audio_path or "",
+            "review_audio_error": self.review_audio_error or "",
         }
         self.recordings.setdefault("recordings", []).append(record)
         write_json(RECORDINGS_PATH, self.recordings)
@@ -3023,6 +3027,7 @@ class CodeHubApp:
 
     def start_replay_audio_capture(self):
         self.review_audio_path = None
+        self.review_audio_error = ""
         if self.replay_audio_thread and self.replay_audio_thread.is_alive():
             return
         try:
@@ -3044,6 +3049,7 @@ class CodeHubApp:
             self.status.set(f"Recording replay audio: {source}")
         except Exception as e:
             self.review_audio_path = None
+            self.review_audio_error = str(e)
             self.replay_audio_thread = None
             self.status.set(f"Replay audio failed: {e}")
 
@@ -3051,7 +3057,9 @@ class CodeHubApp:
         try:
             self._soundcard_audio_worker(out_path, source, speaker_name, mic_name, stop_event)
         except Exception as e:
-            self.root.after(0, lambda err=e: self.status.set(f"Replay audio failed: {err}"))
+            error_text = str(e)
+            self.review_audio_error = error_text
+            self.root.after(0, lambda err=error_text: self.status.set(f"Replay audio failed: {err}"))
             try:
                 if out_path and Path(out_path).exists() and Path(out_path).stat().st_size < 1024:
                     Path(out_path).unlink(missing_ok=True)
@@ -3067,17 +3075,17 @@ class CodeHubApp:
         chunk = 1024
         source = str(source or "Game/System")
 
-        speaker = self.resolve_soundcard_speaker(speaker_name)
+        loopback = self.resolve_soundcard_speaker(speaker_name)
         mic = self.resolve_soundcard_mic(mic_name)
         use_game = source in ("Game/System", "Both")
         use_mic = source in ("Microphone", "Both")
 
-        if use_game and speaker is None:
-            raise RuntimeError("No speaker/headphone loopback device found. Try Refresh Devices or install/update audio drivers.")
+        if use_game and loopback is None:
+            raise RuntimeError("No game/headphones loopback device found. Open Settings, press Refresh Devices, then choose a Game/headphones device.")
         if use_mic and mic is None:
             raise RuntimeError("No microphone device found. Try Refresh Devices or choose a different mic.")
 
-        game_rec = speaker.recorder(samplerate=sample_rate, channels=[0, 1]) if use_game else None
+        game_rec = loopback.recorder(samplerate=sample_rate, channels=[0, 1]) if use_game else None
         mic_rec = mic.recorder(samplerate=sample_rate, channels=[0, 1]) if use_mic else None
 
         def to_stereo(data):
@@ -3130,8 +3138,12 @@ class CodeHubApp:
             if self.review_audio_path:
                 p = Path(self.review_audio_path)
                 if not p.exists() or p.stat().st_size < 1024:
+                    if not self.review_audio_error:
+                        self.review_audio_error = "Replay audio was enabled, but no usable WAV was written. Pick a Game/headphones loopback device in Settings, press Refresh Devices, then record again."
                     self.review_audio_path = None
         except Exception:
+            if not self.review_audio_error:
+                self.review_audio_error = "Replay audio was enabled, but CodeHub could not verify the recorded WAV."
             self.review_audio_path = None
 
     def open_review_video(self):
@@ -3153,12 +3165,20 @@ class CodeHubApp:
 
     def open_review_audio(self):
         path = self.review_audio_path
+        error_text = self.review_audio_error
         if not path:
             _, rec = self.selected_review_recording()
             if rec:
                 path = rec.get("review_audio")
+                error_text = error_text or rec.get("review_audio_error", "")
         if not path or not Path(path).exists():
-            messagebox.showinfo(APP_NAME, "No replay audio WAV exists for this recording. Enable replay audio in Settings, then record a new macro.")
+            message = "No replay audio WAV exists for this recording."
+            if error_text:
+                message += f"\n\nLast audio capture error:\n{error_text}"
+            else:
+                message += "\n\nReplay audio is enabled for future recordings, but this saved recording does not have a WAV attached yet."
+            message += "\n\nUse Settings > Replay audio, press Refresh Devices, choose your Game/headphones loopback device, then record a new macro."
+            messagebox.showinfo(APP_NAME, message)
             return
         try:
             if os.name == "nt":
@@ -3437,6 +3457,7 @@ class CodeHubApp:
         self.review_video_path = rec.get("review_video") or None
         self.review_video_meta = rec.get("review_video_meta") or {}
         self.review_audio_path = rec.get("review_audio") or None
+        self.review_audio_error = rec.get("review_audio_error") or ""
         self.review_shot_paths = [p for p in rec.get("review_screenshots", []) if Path(p).exists()]
         self.review_photo_cache.clear()
         self.review_shot_index = 0
@@ -3455,6 +3476,8 @@ class CodeHubApp:
             self.review_output.insert(END, f"Video : {self.review_video_path}\n")
         if self.review_audio_path and Path(self.review_audio_path).exists():
             self.review_output.insert(END, f"Audio : {self.review_audio_path}\n")
+        elif self.review_audio_error:
+            self.review_output.insert(END, f"Audio : failed - {self.review_audio_error}\n")
         if self.review_shot_paths:
             self.review_output.insert(END, f"Frames: {len(self.review_shot_paths)} screenshots\n")
             self.show_review_frame(0)
@@ -5444,7 +5467,8 @@ root.mainloop()
         self.settings["last_update_tag"] = latest_tag
         write_json(SETTINGS_PATH, self.settings)
 
-        script = f"""@echo off
+        script = textwrap.dedent(f"""\
+    @echo off
     setlocal EnableExtensions
     color 0A
     title CodeHub Update
@@ -5483,7 +5507,7 @@ root.mainloop()
     echo [CodeHub] updated and closing...
     timeout /t 1 /nobreak >nul
     exit
-    """
+    """)
 
         cmd_path.write_text(script, encoding="utf-8")
         if os.name == "nt":
@@ -5497,13 +5521,20 @@ root.mainloop()
             except Exception:
                 pass
 
-        subprocess.Popen(
-            ["cmd.exe", "/c", "call", str(cmd_path)],
-            cwd=str(app_dir),
-            creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
-        )
+        if os.name == "nt":
+            try:
+                os.startfile(str(cmd_path))
+            except Exception:
+                subprocess.Popen(
+                    ["cmd.exe", "/k", "call", str(cmd_path)],
+                    cwd=str(app_dir),
+                    creationflags=subprocess.CREATE_NEW_CONSOLE
+                )
+        else:
+            subprocess.Popen(["sh", str(cmd_path)], cwd=str(app_dir))
 
-        self.root.after(150, self.close)
+        self.status.set("Updater console opened. CodeHub will close in a moment...")
+        self.root.after(1200, self.close)
 
     def run_local_updater(self):
         candidates = [
@@ -5524,7 +5555,8 @@ root.mainloop()
         cmd_path = app_dir / "CodeHub_local_update.cmd"
         current_pid = os.getpid()
 
-        script = f"""@echo off
+        script = textwrap.dedent(f"""\
+    @echo off
     setlocal EnableExtensions
     color 0A
     title CodeHub Local Updater
@@ -5558,7 +5590,7 @@ root.mainloop()
     echo [CodeHub] updated and closing...
     timeout /t 1 /nobreak >nul
     exit
-    """
+    """)
 
         cmd_path.write_text(script, encoding="utf-8")
         if os.name == "nt":
@@ -5572,13 +5604,20 @@ root.mainloop()
             except Exception:
                 pass
 
-        subprocess.Popen(
-            ["cmd.exe", "/c", "call", str(cmd_path)],
-            cwd=str(app_dir),
-            creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
-        )
+        if os.name == "nt":
+            try:
+                os.startfile(str(cmd_path))
+            except Exception:
+                subprocess.Popen(
+                    ["cmd.exe", "/k", "call", str(cmd_path)],
+                    cwd=str(app_dir),
+                    creationflags=subprocess.CREATE_NEW_CONSOLE
+                )
+        else:
+            subprocess.Popen(["sh", str(cmd_path)], cwd=str(app_dir))
 
-        self.root.after(150, self.close)
+        self.status.set("Local updater console opened. CodeHub will close in a moment...")
+        self.root.after(1200, self.close)
 
     def start_tutorial(self):
         self.tutorial_steps = [
@@ -6017,10 +6056,47 @@ CodeHub • Built by Catchallcat5382
         self._speaker_devices_cache = []
         try:
             import soundcard as sc
-            for speaker in sc.all_speakers():
-                label = str(getattr(speaker, "name", "Speakers"))
+            seen = set()
+
+            try:
+                default_speaker = sc.default_speaker()
+                default_name = str(getattr(default_speaker, "name", "Default Speakers"))
+                default_loopback = sc.get_microphone(default_name, include_loopback=True)
+                label = f"Default Speakers: {default_name}"
                 names.append(label)
-                self._speaker_devices_cache.append((label, speaker))
+                self._speaker_devices_cache.append((label, default_loopback))
+                seen.add(label.lower())
+                seen.add(default_name.lower())
+            except Exception:
+                pass
+
+            all_loopbacks = list(sc.all_microphones(include_loopback=True))
+            filtered = []
+            fallback = []
+            for mic in all_loopbacks:
+                label = str(getattr(mic, "name", "Loopback Audio"))
+                lower = label.lower()
+                if lower in seen:
+                    continue
+                fallback.append((label, mic))
+                looks_like_output = any(term in lower for term in (
+                    "loopback", "speaker", "speakers", "headphone", "headphones",
+                    "output", "wasapi", "what u hear", "stereo mix", "monitor"
+                ))
+                looks_like_plain_mic = "microphone" in lower and not any(term in lower for term in ("loopback", "stereo mix", "what u hear"))
+                if looks_like_output and not looks_like_plain_mic:
+                    filtered.append((label, mic))
+                    seen.add(lower)
+
+            if not filtered:
+                filtered = [(label, mic) for label, mic in fallback if label.lower() not in seen]
+
+            for label, mic in filtered:
+                if label.lower() in seen:
+                    continue
+                names.append(label)
+                self._speaker_devices_cache.append((label, mic))
+                seen.add(label.lower())
         except Exception:
             pass
         return names
@@ -6042,13 +6118,21 @@ CodeHub • Built by Catchallcat5382
         try:
             import soundcard as sc
             if not label or label == "Default Speakers":
-                return sc.default_speaker()
-            for name, speaker in self._speaker_devices_cache or []:
+                speaker = sc.default_speaker()
+                return sc.get_microphone(str(getattr(speaker, "name", "")), include_loopback=True)
+            for name, loopback in self._speaker_devices_cache or []:
                 if name == label:
-                    return speaker
-            for speaker in sc.all_speakers():
-                if str(getattr(speaker, "name", "")) == str(label):
-                    return speaker
+                    return loopback
+            raw_label = str(label)
+            if raw_label.startswith("Default Speakers:"):
+                raw_label = raw_label.split(":", 1)[1].strip()
+            try:
+                return sc.get_microphone(raw_label, include_loopback=True)
+            except Exception:
+                pass
+            for mic in sc.all_microphones(include_loopback=True):
+                if str(getattr(mic, "name", "")) == str(label):
+                    return mic
         except Exception:
             return None
         return None
@@ -6228,5 +6312,4 @@ CodeHub • Built by Catchallcat5382
 if __name__ == "__main__":
     startup_console()
     CodeHubApp().run()
-
 
