@@ -6,3 +6,4 @@ opencv-python>=4.9.0.80
 numpy>=1.26.0
 pygame>=2.6.0
 sounddevice>=0.4.7
+soundcard>=0.4.3

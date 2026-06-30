@@ -14,6 +14,7 @@ if (Test-Path $BuildRoot) {
 python -m PyInstaller `
     --noconfirm `
     --clean `
+    --noupx `
     --onefile `
     --console `
     --name CodeHub `
@@ -21,6 +22,7 @@ python -m PyInstaller `
     --add-data "$LogoAssets;assets" `
     --hidden-import pygame `
     --hidden-import sounddevice `
+    --hidden-import soundcard `
     --hidden-import mss `
     --hidden-import cv2 `
     --hidden-import numpy `

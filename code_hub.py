@@ -59,9 +59,10 @@ APP_NAME = "CodeHub"
 MAKER_NAME = "Macro Maker"
 GITHUB_REPO = "Catchallcat5382/CodeHub"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
-GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/raw/main/CodeHub.exe"
+GITHUB_API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest/download/CodeHub.exe"
 BUILD_COMMIT = "local-build"
-BUILD_NUMBER = 21
+BUILD_NUMBER = 22
 MAX_REPLAY_FPS = 240
 REPLAY_FPS_CHOICES = ["15", "20", "24", "30", "60", "120", "144", "240"]
 
@@ -77,23 +78,11 @@ def build_version(build_number=None):
     minor = (n - 1) % 10
 
     if minor == 0:
-        return f"V{major}"
-    return f"V{major}.{minor}"
+        return f"v{major}"
+    return f"v{major}.{minor}"
 
 def get_live_build_number():
-    try:
-        with urllib.request.urlopen(
-            f"https://api.github.com/repos/{GITHUB_REPO}/commits?per_page=1",
-            timeout=4
-        ) as response:
-            link = response.headers.get("Link", "")
-
-        match = re.search(r"[?&]page=(\d+)>; rel=\"last\"", link)
-        if match:
-            return int(match.group(1))
-    except Exception:
-        pass
-
+    # Versions are release-based, not commit-count-based.
     return BUILD_NUMBER
 
 if getattr(sys, "frozen", False):
@@ -134,9 +123,9 @@ DEFAULT_SETTINGS = {
     "custom_panel": "#0b0b0b",
     "custom_text": "#e8f0f8",
     "custom_accent": "#57a6ff",
-    "ui_sounds_enabled": True,
-    "click_sounds_enabled": True,
-    "tab_sounds_enabled": True,
+    "ui_sounds_enabled": False,
+    "click_sounds_enabled": False,
+    "tab_sounds_enabled": False,
     "loading_sound_enabled": True,
     "show_data_paths": False,
     "record_screenshots": True,
@@ -144,11 +133,15 @@ DEFAULT_SETTINGS = {
     "review_capture_interval_ms": 1000 // 60,
     "record_replay_video": False,
     "record_replay_audio": False,
+    "replay_audio_source": "Game/System",
     "replay_audio_device": "Default",
+    "replay_speaker_device": "Default Speakers",
+    "replay_mic_device": "Default Mic",
     "allow_headset_mic_audio": False,
     "builder_background_image": "",
     "auto_update": False,
     "last_update_sha": "",
+    "last_update_tag": "",
 }
 
 DEFAULT_KNOWLEDGE = {
@@ -413,7 +406,7 @@ def python_command():
                 return command
         except Exception:
             continue
-    return [sys.executable]
+    return None
 
 
 def pythonw_command():
@@ -433,6 +426,10 @@ def pythonw_command():
         except Exception:
             continue
     return python_command()
+
+
+def python_install_url():
+    return "https://www.python.org/downloads/windows/"
 
 
 def hidden_process_flags():
@@ -1344,6 +1341,14 @@ class CodeHubApp:
     def __init__(self):
         ensure_files()
         self.settings = read_json(SETTINGS_PATH, DEFAULT_SETTINGS)
+        if self.settings.get("default_export_kind") not in ("AutoHotkey v2", "AutoHotkey v1"):
+            self.settings["default_export_kind"] = "AutoHotkey v2"
+        if "click_sounds_enabled" not in self.settings:
+            self.settings["click_sounds_enabled"] = False
+        if "tab_sounds_enabled" not in self.settings:
+            self.settings["tab_sounds_enabled"] = False
+        self.settings["loading_sound_enabled"] = True
+        write_json(SETTINGS_PATH, self.settings)
         apply_theme_to_palette(self.settings)
         self.recordings = read_json(RECORDINGS_PATH, {"recordings": []})
         self.knowledge = read_json(KNOWLEDGE_PATH, DEFAULT_KNOWLEDGE)
@@ -1403,12 +1408,15 @@ class CodeHubApp:
         self.record_screenshots = BooleanVar(value=bool(self.settings.get("record_screenshots", True)))
         self.record_replay_video = BooleanVar(value=bool(self.settings.get("record_replay_video", False)))
         self.record_replay_audio = BooleanVar(value=bool(self.settings.get("record_replay_audio", False)))
+        self.replay_audio_source = StringVar(value=self.settings.get("replay_audio_source", "Game/System"))
         self.replay_audio_device = StringVar(value=self.settings.get("replay_audio_device", "Default"))
+        self.replay_speaker_device = StringVar(value=self.settings.get("replay_speaker_device", "Default Speakers"))
+        self.replay_mic_device = StringVar(value=self.settings.get("replay_mic_device", "Default Mic"))
         self.allow_headset_mic_audio = BooleanVar(value=bool(self.settings.get("allow_headset_mic_audio", False)))
         self.ui_sounds_enabled = BooleanVar(value=bool(self.settings.get("ui_sounds_enabled", True)))
         self.click_sounds_enabled = BooleanVar(value=bool(self.settings.get("click_sounds_enabled", self.settings.get("ui_sounds_enabled", True))))
         self.tab_sounds_enabled = BooleanVar(value=bool(self.settings.get("tab_sounds_enabled", self.settings.get("ui_sounds_enabled", True))))
-        self.loading_sound_enabled = BooleanVar(value=bool(self.settings.get("loading_sound_enabled", True)))
+        self.loading_sound_enabled = BooleanVar(value=True)
         self.show_data_paths = BooleanVar(value=bool(self.settings.get("show_data_paths", False)))
         self.builder_background_image = StringVar(value=str(self.settings.get("builder_background_image", "")))
         self.builder_background_photo = None
@@ -1452,6 +1460,8 @@ class CodeHubApp:
         self.replay_audio_stop_event = None
         self.replay_video_start_time = None
         self._audio_devices_cache = []
+        self._speaker_devices_cache = []
+        self._mic_devices_cache = []
         self._sound_ready = False
         self._sound_cache = {}
         self._sound_channels = {}
@@ -1487,8 +1497,6 @@ class CodeHubApp:
         self.start_auto_refresh()
         self.root.bind("<Map>", self.restore_borderless_after_minimize)
         self.root.after(100, self.show_ready_window)
-        if self.auto_update.get():
-            self.root.after(1200, lambda: self.check_for_updates(auto=True))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
 
@@ -1563,6 +1571,8 @@ class CodeHubApp:
                 self.root.focus_force()
                 self.root.update_idletasks()
                 self.force_taskbar_icon()
+                if self.auto_update.get():
+                    self.root.after(1500, lambda: self.check_for_updates(auto=True))
             except Exception:
                 pass
 
@@ -2652,7 +2662,7 @@ class CodeHubApp:
         sr.pack(fill=X)
         ttk.Checkbutton(sr, text="Click sounds", variable=self.click_sounds_enabled, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
         ttk.Checkbutton(sr, text="Tab sounds", variable=self.tab_sounds_enabled, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
-        ttk.Checkbutton(sr, text="Loading sound", variable=self.loading_sound_enabled, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
+        ttk.Label(sr, text="Loading sound always on", style="Muted.TLabel").pack(side=LEFT, padx=(0, 12))
         ttk.Button(sr, text="Test Click", style="Ghost.TButton", command=lambda: self.play_ui_sound("click", force=True)).pack(side=LEFT, padx=(0, 6))
         ttk.Button(sr, text="Test Tab", style="Ghost.TButton", command=lambda: self.play_ui_sound("tab", force=True)).pack(side=LEFT)
 
@@ -2676,14 +2686,25 @@ class CodeHubApp:
         rr.pack(fill=X)
         ttk.Checkbutton(rr, text="Experimental OpenCV video capture", variable=self.record_replay_video, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
         ttk.Checkbutton(rr, text="Record replay audio WAV", variable=self.record_replay_audio, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
-        ttk.Label(rr, text="Audio device:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
-        self.audio_device_combo = ttk.Combobox(rr, textvariable=self.replay_audio_device,
-                                               values=self.audio_device_names(), state="readonly", width=28)
-        self.audio_device_combo.pack(side=LEFT, padx=(0, 8))
+        ttk.Label(rr, text="Source:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        ttk.Combobox(rr, textvariable=self.replay_audio_source,
+                     values=["Game/System", "Microphone", "Both"],
+                     state="readonly", width=13).pack(side=LEFT, padx=(0, 8))
         ttk.Button(rr, text="Refresh Devices", style="Small.TButton", command=self.refresh_audio_devices).pack(side=LEFT)
+
+        rr_audio = Frame(pad, bg=C["bg"], pady=4)
+        rr_audio.pack(fill=X)
+        ttk.Label(rr_audio, text="Game/headphones:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        self.speaker_device_combo = ttk.Combobox(rr_audio, textvariable=self.replay_speaker_device,
+                                                 values=self.speaker_device_names(), state="readonly", width=34)
+        self.speaker_device_combo.pack(side=LEFT, padx=(0, 10))
+        ttk.Label(rr_audio, text="Mic:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        self.mic_device_combo = ttk.Combobox(rr_audio, textvariable=self.replay_mic_device,
+                                             values=self.mic_device_names(), state="readonly", width=34)
+        self.mic_device_combo.pack(side=LEFT, padx=(0, 8))
         ttk.Label(
             pad,
-            text="Audio recording uses input/loopback devices. For game/system audio, pick Stereo Mix, loopback, or a virtual audio cable if Windows exposes one.",
+            text="Game/headphones uses speaker loopback when available. Mic is only for voice. Choose Both if you want game sound plus mic mixed into one WAV.",
             style="Muted.TLabel",
             wraplength=900,
         ).pack(anchor="w", pady=(2, 6))
@@ -3005,11 +3026,9 @@ class CodeHubApp:
         if self.replay_audio_thread and self.replay_audio_thread.is_alive():
             return
         try:
-            device_index = self.selected_audio_device_index()
-            device_label = self.selected_audio_device_label(device_index)
-            if not self.is_game_audio_device(device_label):
-                self.status.set("Replay audio skipped: pick Stereo Mix, loopback, virtual cable, or Voicemeeter to record game audio. Mic devices are ignored.")
-                return
+            source = self.replay_audio_source.get() if hasattr(self, "replay_audio_source") else "Game/System"
+            speaker_name = self.replay_speaker_device.get() if hasattr(self, "replay_speaker_device") else "Default Speakers"
+            mic_name = self.replay_mic_device.get() if hasattr(self, "replay_mic_device") else "Default Mic"
             audio_dir = DATA_DIR / "review_audio"
             audio_dir.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -3018,63 +3037,19 @@ class CodeHubApp:
             self.replay_audio_stop_event = threading.Event()
             self.replay_audio_thread = threading.Thread(
                 target=self._replay_audio_worker,
-                args=(str(out_path), device_index, self.replay_audio_stop_event),
+                args=(str(out_path), source, speaker_name, mic_name, self.replay_audio_stop_event),
                 daemon=True,
             )
             self.replay_audio_thread.start()
-            self.status.set(f"Recording replay audio from {device_label or 'Default input'}")
+            self.status.set(f"Recording replay audio: {source}")
         except Exception as e:
             self.review_audio_path = None
             self.replay_audio_thread = None
             self.status.set(f"Replay audio failed: {e}")
 
-    def _replay_audio_worker(self, out_path, device_index, stop_event):
+    def _replay_audio_worker(self, out_path, source, speaker_name, mic_name, stop_event):
         try:
-            import queue
-            import wave
-            import sounddevice as sd
-
-            sample_rate = 44100
-            channels = 2
-            q = queue.Queue()
-
-            def callback(indata, frames, time_info, status):
-                if status:
-                    pass
-                q.put(bytes(indata))
-
-            with wave.open(out_path, "wb") as wf:
-                wf.setnchannels(channels)
-                wf.setsampwidth(2)
-                wf.setframerate(sample_rate)
-                try:
-                    stream = sd.RawInputStream(
-                        samplerate=sample_rate,
-                        blocksize=2048,
-                        device=device_index,
-                        channels=channels,
-                        dtype="int16",
-                        callback=callback,
-                    )
-                except Exception:
-                    channels = 1
-                    wf.setnchannels(channels)
-                    stream = sd.RawInputStream(
-                        samplerate=sample_rate,
-                        blocksize=2048,
-                        device=device_index,
-                        channels=channels,
-                        dtype="int16",
-                        callback=callback,
-                    )
-                with stream:
-                    while not stop_event.is_set():
-                        try:
-                            wf.writeframes(q.get(timeout=0.25))
-                        except queue.Empty:
-                            pass
-                    while not q.empty():
-                        wf.writeframes(q.get_nowait())
+            self._soundcard_audio_worker(out_path, source, speaker_name, mic_name, stop_event)
         except Exception as e:
             self.root.after(0, lambda err=e: self.status.set(f"Replay audio failed: {err}"))
             try:
@@ -3082,6 +3057,62 @@ class CodeHubApp:
                     Path(out_path).unlink(missing_ok=True)
             except Exception:
                 pass
+
+    def _soundcard_audio_worker(self, out_path, source, speaker_name, mic_name, stop_event):
+        import wave
+        import numpy as np
+        import soundcard as sc
+
+        sample_rate = 44100
+        chunk = 1024
+        source = str(source or "Game/System")
+
+        speaker = self.resolve_soundcard_speaker(speaker_name)
+        mic = self.resolve_soundcard_mic(mic_name)
+        use_game = source in ("Game/System", "Both")
+        use_mic = source in ("Microphone", "Both")
+
+        if use_game and speaker is None:
+            raise RuntimeError("No speaker/headphone loopback device found. Try Refresh Devices or install/update audio drivers.")
+        if use_mic and mic is None:
+            raise RuntimeError("No microphone device found. Try Refresh Devices or choose a different mic.")
+
+        game_rec = speaker.recorder(samplerate=sample_rate, channels=[0, 1]) if use_game else None
+        mic_rec = mic.recorder(samplerate=sample_rate, channels=[0, 1]) if use_mic else None
+
+        def to_stereo(data):
+            arr = np.asarray(data, dtype=np.float32)
+            if arr.ndim == 1:
+                arr = np.column_stack([arr, arr])
+            if arr.shape[1] == 1:
+                arr = np.repeat(arr, 2, axis=1)
+            return arr[:, :2]
+
+        managers = [rec for rec in (game_rec, mic_rec) if rec is not None]
+        exits = []
+        try:
+            for rec in managers:
+                exits.append(rec.__enter__())
+            with wave.open(out_path, "wb") as wf:
+                wf.setnchannels(2)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                while not stop_event.is_set():
+                    mix = None
+                    if use_game:
+                        mix = to_stereo(exits[0].record(numframes=chunk))
+                    if use_mic:
+                        mic_index = 1 if use_game else 0
+                        mic_data = to_stereo(exits[mic_index].record(numframes=chunk)) * 0.75
+                        mix = mic_data if mix is None else mix + mic_data
+                    mix = np.clip(mix if mix is not None else np.zeros((chunk, 2), dtype=np.float32), -1.0, 1.0)
+                    wf.writeframes((mix * 32767.0).astype("<i2").tobytes())
+        finally:
+            for rec in reversed(managers):
+                try:
+                    rec.__exit__(None, None, None)
+                except Exception:
+                    pass
 
     def stop_replay_audio_capture(self):
         event = self.replay_audio_stop_event
@@ -3929,8 +3960,12 @@ class CodeHubApp:
             return
         try:
             if path.suffix.lower() == ".py":
+                py = pythonw_command()
+                if not py:
+                    self.missing_runtime_dialog("Python 3", python_install_url(), f"run {path.name}")
+                    return
                 proc = subprocess.Popen(
-                    pythonw_command() + [str(path)], cwd=str(path.parent),
+                    py + [str(path)], cwd=str(path.parent),
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     creationflags=hidden_process_flags())
             elif path.suffix.lower() == ".ahk":
@@ -5259,9 +5294,42 @@ root.mainloop()
             "Install AutoHotkey, restart CodeHub, then try again.\n\n"
             "Open the AutoHotkey download page now?"
         )
-        open_site = messagebox.askyesno(APP_NAME, detail, parent=self.root)
-        if open_site:
-            webbrowser.open(ahk_install_url(version))
+        self.missing_runtime_dialog(
+            f"AutoHotkey v{version if version in ('1', '2') else '1 or v2'}",
+            ahk_install_url(version),
+            action,
+            detail,
+        )
+
+    def missing_runtime_dialog(self, name, url, action, detail=None):
+        win = Toplevel(self.root)
+        win.title(f"Install {name}")
+        win.configure(bg=C["panel"])
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.grab_set()
+        win.geometry("+{}+{}".format(self.root.winfo_rootx() + 140, self.root.winfo_rooty() + 120))
+
+        pad = Frame(win, bg=C["panel"], padx=16, pady=14)
+        pad.pack(fill=BOTH, expand=True)
+        ttk.Label(pad, text=f"{name} is required", style="PanelTitle.TLabel").pack(anchor="w", pady=(0, 8))
+        ttk.Label(
+            pad,
+            text=detail or f"CodeHub cannot {action} until {name} is installed on this PC.\n\nDownload link:\n{url}",
+            style="Muted.TLabel",
+            wraplength=520,
+        ).pack(anchor="w", pady=(0, 12))
+        row = Frame(pad, bg=C["panel"])
+        row.pack(fill=X)
+
+        def copy_link():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(url)
+            self.status.set(f"Copied {name} download link")
+
+        ttk.Button(row, text="Open Browser", style="Accent.TButton", command=lambda: webbrowser.open(url)).pack(side=LEFT, padx=(0, 8))
+        ttk.Button(row, text="Copy Link", style="Ghost.TButton", command=copy_link).pack(side=LEFT, padx=(0, 8))
+        ttk.Button(row, text="Close", style="Ghost.TButton", command=win.destroy).pack(side=RIGHT)
 
     def ensure_ahk_available_for_action(self, version=None, action="use AutoHotkey"):
         version = str(version or self.ahk_version.get() or "2")
@@ -5286,12 +5354,16 @@ root.mainloop()
         self.settings["record_screenshots"] = self.record_screenshots.get()
         self.settings["record_replay_video"] = self.record_replay_video.get()
         self.settings["record_replay_audio"] = self.record_replay_audio.get()
+        self.settings["replay_audio_source"] = self.replay_audio_source.get()
         self.settings["replay_audio_device"] = self.replay_audio_device.get()
+        self.settings["replay_speaker_device"] = self.replay_speaker_device.get()
+        self.settings["replay_mic_device"] = self.replay_mic_device.get()
         self.settings["allow_headset_mic_audio"] = self.allow_headset_mic_audio.get()
         self.settings["ui_sounds_enabled"] = self.ui_sounds_enabled.get()
         self.settings["click_sounds_enabled"] = self.click_sounds_enabled.get()
         self.settings["tab_sounds_enabled"] = self.tab_sounds_enabled.get()
-        self.settings["loading_sound_enabled"] = self.loading_sound_enabled.get()
+        self.loading_sound_enabled.set(True)
+        self.settings["loading_sound_enabled"] = True
         self.settings["show_data_paths"] = self.show_data_paths.get()
         if hasattr(self, "builder_background_image"):
             self.settings["builder_background_image"] = self.builder_background_image.get().strip()
@@ -5309,17 +5381,29 @@ root.mainloop()
             payload = json.loads(response.read().decode("utf-8"))
         return str(payload.get("sha", "")).strip()
 
+    def latest_github_release(self):
+        request = urllib.request.Request(GITHUB_API_LATEST_RELEASE, headers={"User-Agent": "CodeHub-Updater"})
+        with urllib.request.urlopen(request, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        tag = str(payload.get("tag_name", "")).strip()
+        asset_url = GITHUB_EXE_URL
+        for asset in payload.get("assets", []) or []:
+            if str(asset.get("name", "")).lower() == "codehub.exe":
+                asset_url = str(asset.get("browser_download_url") or asset_url)
+                break
+        if not tag:
+            raise RuntimeError("GitHub did not return a release tag.")
+        return tag, asset_url
+
     def check_for_updates(self, auto=False):
-        self.status.set("Checking GitHub for updates...")
+        self.status.set("Checking GitHub releases for updates...")
 
         def worker():
             try:
-                latest_sha = self.latest_github_sha()
-                if not latest_sha:
-                    raise RuntimeError("GitHub did not return a commit SHA.")
-                current_sha = str(self.settings.get("last_update_sha", "") or BUILD_COMMIT)
-                has_update = latest_sha != current_sha
-                self.root.after(0, lambda: self.finish_update_check(latest_sha, has_update, auto))
+                latest_tag, asset_url = self.latest_github_release()
+                current_tag = str(self.settings.get("last_update_tag", "") or build_version(BUILD_NUMBER))
+                has_update = latest_tag != current_tag
+                self.root.after(0, lambda: self.finish_update_check(latest_tag, has_update, auto, asset_url))
             except Exception as exc:
                 if not auto:
                     self.root.after(0, lambda: messagebox.showerror(APP_NAME, f"Update check failed:\n{exc}"))
@@ -5327,26 +5411,25 @@ root.mainloop()
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def finish_update_check(self, latest_sha, has_update, auto):
-        short_sha = latest_sha[:7]
+    def finish_update_check(self, latest_tag, has_update, auto, asset_url=None):
         if not has_update:
-            self.status.set(f"Already up to date    {short_sha}")
+            self.status.set(f"Already up to date    {latest_tag}")
             if not auto:
-                messagebox.showinfo(APP_NAME, f"CodeHub is already up to date.\nLatest: {short_sha}")
+                messagebox.showinfo(APP_NAME, f"CodeHub is already up to date.\nLatest release: {latest_tag}")
             return
         if auto:
             should_update = True
         else:
             should_update = messagebox.askyesno(
                 APP_NAME,
-                f"Update found on GitHub: {short_sha}\n\nDownload the latest one-file CodeHub.exe now?",
+                f"Update found on GitHub: {latest_tag}\n\nDownload the latest CodeHub.exe now?",
             )
         if should_update:
-            self.download_and_apply_update(latest_sha)
+            self.download_and_apply_update(latest_tag, asset_url or GITHUB_EXE_URL)
         else:
-            self.status.set(f"Update available    {short_sha}")
+            self.status.set(f"Update available    {latest_tag}")
 
-    def download_and_apply_update(self, latest_sha):
+    def download_and_apply_update(self, latest_tag, asset_url=None):
         if not getattr(sys, "frozen", False):
             messagebox.showinfo(APP_NAME, "Source mode detected. Use Run Local Updater to rebuild the exe.")
             return
@@ -5357,7 +5440,8 @@ root.mainloop()
         cmd_path = app_dir / "CodeHub_apply_update.cmd"
         current_pid = os.getpid()
 
-        self.settings["last_update_sha"] = latest_sha
+        asset_url = asset_url or GITHUB_EXE_URL
+        self.settings["last_update_tag"] = latest_tag
         write_json(SETTINGS_PATH, self.settings)
 
         script = f"""@echo off
@@ -5367,7 +5451,7 @@ root.mainloop()
     cd /d "{app_dir}"
 
     echo [CodeHub] downloading latest package from GitHub...
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{GITHUB_EXE_URL}' -OutFile '{tmp_exe}'"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{asset_url}' -OutFile '{tmp_exe}'"
     if errorlevel 1 (
         echo [CodeHub] download failed.
         pause
@@ -5928,6 +6012,62 @@ CodeHub • Built by Catchallcat5382
             pass
         return names
 
+    def speaker_device_names(self):
+        names = ["Default Speakers"]
+        self._speaker_devices_cache = []
+        try:
+            import soundcard as sc
+            for speaker in sc.all_speakers():
+                label = str(getattr(speaker, "name", "Speakers"))
+                names.append(label)
+                self._speaker_devices_cache.append((label, speaker))
+        except Exception:
+            pass
+        return names
+
+    def mic_device_names(self):
+        names = ["Default Mic"]
+        self._mic_devices_cache = []
+        try:
+            import soundcard as sc
+            for mic in sc.all_microphones(include_loopback=False):
+                label = str(getattr(mic, "name", "Microphone"))
+                names.append(label)
+                self._mic_devices_cache.append((label, mic))
+        except Exception:
+            pass
+        return names
+
+    def resolve_soundcard_speaker(self, label):
+        try:
+            import soundcard as sc
+            if not label or label == "Default Speakers":
+                return sc.default_speaker()
+            for name, speaker in self._speaker_devices_cache or []:
+                if name == label:
+                    return speaker
+            for speaker in sc.all_speakers():
+                if str(getattr(speaker, "name", "")) == str(label):
+                    return speaker
+        except Exception:
+            return None
+        return None
+
+    def resolve_soundcard_mic(self, label):
+        try:
+            import soundcard as sc
+            if not label or label == "Default Mic":
+                return sc.default_microphone()
+            for name, mic in self._mic_devices_cache or []:
+                if name == label:
+                    return mic
+            for mic in sc.all_microphones(include_loopback=False):
+                if str(getattr(mic, "name", "")) == str(label):
+                    return mic
+        except Exception:
+            return None
+        return None
+
     def selected_audio_device_index(self):
         value = self.replay_audio_device.get()
         if value == "Default":
@@ -5973,6 +6113,16 @@ CodeHub • Built by Catchallcat5382
             self.audio_device_combo.configure(values=values)
         if self.replay_audio_device.get() not in values:
             self.replay_audio_device.set("Default")
+        speaker_values = self.speaker_device_names()
+        if hasattr(self, "speaker_device_combo"):
+            self.speaker_device_combo.configure(values=speaker_values)
+        if hasattr(self, "replay_speaker_device") and self.replay_speaker_device.get() not in speaker_values:
+            self.replay_speaker_device.set("Default Speakers")
+        mic_values = self.mic_device_names()
+        if hasattr(self, "mic_device_combo"):
+            self.mic_device_combo.configure(values=mic_values)
+        if hasattr(self, "replay_mic_device") and self.replay_mic_device.get() not in mic_values:
+            self.replay_mic_device.set("Default Mic")
         self.save_permissions()
 
     def toggle_data_paths(self):
