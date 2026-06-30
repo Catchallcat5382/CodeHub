@@ -63,7 +63,7 @@ GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
 GITHUB_API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest/download/CodeHub.exe"
 BUILD_COMMIT = "local-build"
-BUILD_NUMBER = 24
+BUILD_NUMBER = 25
 MAX_REPLAY_FPS = 240
 REPLAY_FPS_CHOICES = ["15", "20", "24", "30", "60", "120", "144", "240"]
 
@@ -429,6 +429,53 @@ def pythonw_command():
     return python_command()
 
 
+PYTHON_IMPORT_PACKAGES = {
+    "pynput": "pynput",
+    "PIL": "Pillow",
+    "mss": "mss",
+    "cv2": "opencv-python",
+    "numpy": "numpy",
+    "sounddevice": "sounddevice",
+    "soundcard": "soundcard",
+}
+
+
+def required_packages_for_python_script(path):
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        text = ""
+    packages = []
+    for module, package in PYTHON_IMPORT_PACKAGES.items():
+        patterns = (
+            f"import {module}",
+            f"from {module} import",
+        )
+        if any(pattern in text for pattern in patterns):
+            packages.append((module, package))
+    if "from pynput import" in text and ("pynput", "pynput") not in packages:
+        packages.append(("pynput", "pynput"))
+    return packages
+
+
+def missing_python_modules(py_cmd, modules):
+    missing = []
+    for module, package in modules:
+        try:
+            result = subprocess.run(
+                py_cmd + ["-c", f"import {module}"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=hidden_process_flags(),
+            )
+            if result.returncode != 0:
+                missing.append((module, package))
+        except Exception:
+            missing.append((module, package))
+    return missing
+
+
 def python_install_url():
     return "https://www.python.org/downloads/windows/"
 
@@ -543,6 +590,18 @@ def selected_ahk_version_from_export(export_kind):
     if "v1" in text or "1" in text and "autohotkey" in text:
         return "1"
     return "2"
+
+
+def ahk_required_version_for_file(path, fallback="2"):
+    try:
+        head = Path(path).read_text(encoding="utf-8", errors="replace")[:1200].lower()
+    except Exception:
+        return str(fallback or "2")
+    if "#requires autohotkey v1" in head or "autohotkey v1.1" in head:
+        return "1"
+    if "#requires autohotkey v2" in head or "autohotkey v2.0" in head:
+        return "2"
+    return str(fallback or "2")
 
 
 def show_missing_ahk_and_exit():
@@ -845,6 +904,7 @@ def generate_ahk_v1(events, mode, script_name):
         "",
         "ShowCodeHubLoader(durationMs := 900, title := \"Loading macro\")",
         "{",
+        "    global LoaderStatus, LoaderBar",
         "    Gui, Loader:New, +AlwaysOnTop -Caption +ToolWindow",
         "    Gui, Loader:Color, 081019",
         "    Gui, Loader:Font, s10 cEAF6FF, Segoe UI",
@@ -870,13 +930,13 @@ def generate_ahk_v1(events, mode, script_name):
         "",
         "CreateWatermark()",
         "{",
-        "    Gui, WM:New, +AlwaysOnTop -Caption +ToolWindow +E0x20",
+        "    Gui, WM:New, +AlwaysOnTop -Caption +ToolWindow +E0x20 +HwndWMHwnd",
         "    Gui, WM:Color, 101820",
         "    Gui, WM:Font, s8 cD6DEE8, Segoe UI",
         "    Gui, WM:Add, Text, w180 Center, Made by Cat · AutoHotkey v1",
         "    x := A_ScreenWidth - 174",
         "    Gui, WM:Show, NoActivate x%x% y4 w168 h26",
-        "    WinSet, Transparent, 62, ahk_id %A_ScriptHwnd%",
+        "    WinSet, Transparent, 62, ahk_id %WMHwnd%",
         "}",
     ])
     return "\n".join(lines)
@@ -895,9 +955,42 @@ Watermark: Made by Cat.
 import json
 import os
 import math
+import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
+from tkinter import messagebox
+
+
+def require_generated_script_packages():
+    missing = []
+    try:
+        import pynput  # noqa: F401
+    except Exception:
+        missing.append("pynput")
+    if not missing:
+        return
+    message = (
+        "This CodeHub Python macro needs one missing package:\\n\\n"
+        + "\\n".join(missing)
+        + "\\n\\nInstall it with:\\n"
+        + sys.executable
+        + " -m pip install "
+        + " ".join(missing)
+        + "\\n\\nCodeHub can install this automatically when you run the script from the CodeHub app."
+    )
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("CodeHub Python Macro", message)
+        root.destroy()
+    except Exception:
+        print(message)
+    raise SystemExit(1)
+
+
+require_generated_script_packages()
 from pynput import keyboard
 from pynput.keyboard import Controller as KeyboardController, Key
 from pynput.mouse import Button, Controller as MouseController
@@ -3983,16 +4076,20 @@ class CodeHubApp:
             return
         try:
             if path.suffix.lower() == ".py":
-                py = pythonw_command()
-                if not py:
+                py_for_packages = python_command()
+                if not py_for_packages:
                     self.missing_runtime_dialog("Python 3", python_install_url(), f"run {path.name}")
                     return
+                if not self.ensure_python_script_requirements(path, py_for_packages):
+                    return
+                py = pythonw_command() or py_for_packages
                 proc = subprocess.Popen(
                     py + [str(path)], cwd=str(path.parent),
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     creationflags=hidden_process_flags())
             elif path.suffix.lower() == ".ahk":
-                version = str(self.ahk_version.get() or "2")
+                self.repair_generated_ahk_v1_loader(path)
+                version = ahk_required_version_for_file(path, self.ahk_version.get() or "2")
                 ahk = self.selected_ahk_exe(version)
                 if not ahk:
                     self.missing_ahk_dialog(version, f"run {path.name}")
@@ -4011,6 +4108,87 @@ class CodeHubApp:
             self.lock_for_macro(proc, path.name)
         except Exception as e:
             messagebox.showerror(APP_NAME, f"Could not run script:\n{e}")
+
+    def repair_generated_ahk_v1_loader(self, path):
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return
+        if "#Requires AutoHotkey v1.1" not in text:
+            return
+        original = text
+        text = text.replace(
+            'ShowCodeHubLoader(durationMs := 900, title := "Loading macro")\n{\n    Gui, Loader:New',
+            'ShowCodeHubLoader(durationMs := 900, title := "Loading macro")\n{\n    global LoaderStatus, LoaderBar\n    Gui, Loader:New',
+        )
+        text = text.replace(
+            "Gui, WM:New, +AlwaysOnTop -Caption +ToolWindow +E0x20\n",
+            "Gui, WM:New, +AlwaysOnTop -Caption +ToolWindow +E0x20 +HwndWMHwnd\n",
+        )
+        text = text.replace(
+            "WinSet, Transparent, 62, ahk_id %A_ScriptHwnd%",
+            "WinSet, Transparent, 62, ahk_id %WMHwnd%",
+        )
+        if text == original:
+            return
+        try:
+            Path(path).write_text(text, encoding="utf-8", newline="")
+            if self.current_editor_file and Path(self.current_editor_file) == Path(path):
+                self.current_editor_saved_text = text
+                self.editor.delete("1.0", END)
+                self.editor.insert(END, text)
+                self.editor_dirty = False
+            self.status.set(f"Repaired AHK v1 loader in {Path(path).name}")
+        except Exception as e:
+            messagebox.showwarning(APP_NAME, f"CodeHub found an old AHK v1 loader bug but could not repair it:\n{e}", parent=self.root)
+
+    def ensure_python_script_requirements(self, path, py_cmd):
+        requirements = required_packages_for_python_script(path)
+        if not requirements:
+            return True
+        missing = missing_python_modules(py_cmd, requirements)
+        if not missing:
+            return True
+        packages = sorted({package for _module, package in missing})
+        command_text = " ".join(py_cmd + ["-m", "pip", "install"] + packages)
+        ok = messagebox.askyesno(
+            APP_NAME,
+            "This Python script needs missing packages before it can run.\n\n"
+            f"Script: {path.name}\n"
+            f"Missing: {', '.join(packages)}\n\n"
+            "Install them now?\n\n"
+            f"Command:\n{command_text}",
+            parent=self.root,
+        )
+        if not ok:
+            self.status.set("Python requirements install cancelled")
+            return False
+        try:
+            self.status.set(f"Installing Python packages: {', '.join(packages)}")
+            self.root.update_idletasks()
+            result = subprocess.run(
+                py_cmd + ["-m", "pip", "install"] + packages,
+                cwd=str(APP_ROOT),
+                capture_output=True,
+                text=True,
+                timeout=240,
+            )
+            if result.returncode != 0:
+                messagebox.showerror(
+                    APP_NAME,
+                    "Python package install failed.\n\n"
+                    f"Command:\n{command_text}\n\n"
+                    f"{(result.stderr or result.stdout or '').strip()[:2200]}",
+                    parent=self.root,
+                )
+                self.status.set("Python requirements install failed")
+                return False
+            self.status.set("Python requirements installed")
+            return True
+        except Exception as e:
+            messagebox.showerror(APP_NAME, f"Could not install Python packages:\n{e}", parent=self.root)
+            self.status.set("Python requirements install failed")
+            return False
 
     def lock_for_macro(self, proc, label):
         self.macro_locked = True
