@@ -64,7 +64,7 @@ GITHUB_API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_REPO}/release
 GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest/download/CodeHub.exe"
 GITHUB_MAIN_EXE_URL = f"https://github.com/{GITHUB_REPO}/raw/main/CodeHub.exe"
 BUILD_COMMIT = "local-build"
-BUILD_NUMBER = 3
+BUILD_NUMBER = 30
 MAX_REPLAY_FPS = 240
 REPLAY_FPS_CHOICES = ["15", "20", "24", "30", "60", "120", "144", "240"]
 
@@ -116,7 +116,6 @@ DEFAULT_SETTINGS = {
     "export_dir": str(EXPORT_DIR),
     "default_script_name": "MyMacro",
     "ahk_version": "2",
-    "ahk_path_v1": "",
     "ahk_path_v2": "",
     "watermark_corner": "top_right",
     "watermark_opacity": 0.46,
@@ -148,7 +147,6 @@ DEFAULT_SETTINGS = {
     "allow_headset_mic_audio": False,
     "builder_background_image": "",
     "auto_update": False,
-    "create_desktop_shortcut": True,
     "last_update_sha": "",
     "last_update_tag": "",
 }
@@ -291,99 +289,6 @@ def set_windows_app_id():
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Cat.CodeHub.MacroMaker")
     except Exception:
-        pass
-
-
-
-def desktop_dir():
-    """Return the best Windows Desktop folder for the current user."""
-    candidates = []
-    try:
-        candidates.append(Path.home() / "Desktop")
-    except Exception:
-        pass
-    userprofile = os.environ.get("USERPROFILE", "")
-    onedrive = os.environ.get("OneDrive", "")
-    if userprofile:
-        candidates.append(Path(userprofile) / "Desktop")
-    if onedrive:
-        candidates.append(Path(onedrive) / "Desktop")
-    for path in candidates:
-        try:
-            if path.exists():
-                return path
-        except Exception:
-            continue
-    try:
-        fallback = Path.home() / "Desktop"
-        fallback.mkdir(parents=True, exist_ok=True)
-        return fallback
-    except Exception:
-        return None
-
-
-def create_desktop_shortcut(force=False):
-    """Create/update a real Desktop shortcut for CodeHub."""
-    if sys.platform != "win32":
-        return
-    try:
-        desktop = desktop_dir()
-        if not desktop:
-            return
-        shortcut_path = desktop / f"{APP_NAME}.lnk"
-
-        if getattr(sys, "frozen", False):
-            target = str(Path(sys.executable).resolve())
-            arguments = ""
-            work_dir = str(APP_ROOT)
-        else:
-            target = str(Path(sys.executable).resolve())
-            arguments = f'"{Path(__file__).resolve()}"'
-            work_dir = str(APP_ROOT)
-
-        icon_candidates = [
-            ASSET_DIR / "CodeHub Logo.ico",
-            APP_ROOT / "assets" / "CodeHub Logo.ico",
-            BUNDLE_ROOT / "assets" / "CodeHub Logo.ico",
-        ]
-        icon = ""
-        for candidate in icon_candidates:
-            try:
-                if candidate.exists():
-                    icon = str(candidate)
-                    break
-            except Exception:
-                pass
-        if not icon:
-            icon = target
-
-        if shortcut_path.exists() and not force:
-            # Keep it fresh, but avoid hammering the file every startup unless needed.
-            try:
-                if time.time() - shortcut_path.stat().st_mtime < 3600:
-                    return
-            except Exception:
-                pass
-
-        ps_script = (
-            "$Shell = New-Object -ComObject WScript.Shell\n"
-            f"$Shortcut = $Shell.CreateShortcut({str(shortcut_path)!r})\n"
-            f"$Shortcut.TargetPath = {target!r}\n"
-            f"$Shortcut.Arguments = {arguments!r}\n"
-            f"$Shortcut.WorkingDirectory = {work_dir!r}\n"
-            f"$Shortcut.IconLocation = {icon!r}\n"
-            "$Shortcut.Description = 'Launch CodeHub'\n"
-            "$Shortcut.Save()\n"
-        )
-        subprocess.run(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            creationflags=hidden_process_flags(),
-        )
-    except Exception:
-        # Shortcut creation should never block CodeHub startup.
         pass
 
 
@@ -713,8 +618,7 @@ def show_missing_ahk_and_exit():
     message = (
         "CodeHub requires AutoHotkey to run.\n\n"
         "AutoHotkey was not found on this PC, so CodeHub cannot open.\n\n"
-        "Install AutoHotkey v2 or AutoHotkey v1.1, then reopen CodeHub.\n"
-        "You can choose v1 or v2 inside CodeHub Settings after it starts."
+        "Install AutoHotkey v2, then reopen CodeHub."
     )
     try:
         root = Tk()
@@ -727,18 +631,18 @@ def show_missing_ahk_and_exit():
 
 
 def require_autohotkey_or_exit():
-    if not find_ahk_exe("2") and not find_ahk_exe("1") and not find_ahk_exe():
+    if not find_ahk_exe("2"):
         show_missing_ahk_and_exit()
 
 
 def ahk_install_url(version=None):
-    # Official AutoHotkey download page. Use the same page for v1/v2 choices.
+    # Official AutoHotkey download page.
     return "https://www.autohotkey.com/"
 
 def describe_missing_ahk(version=None):
     version = str(version or "").strip()
     if version == "1":
-        return "AutoHotkey v1.1 is required to save or run this AHK v1 script."
+        return "AutoHotkey v1 is no longer supported. Re-export this script as AutoHotkey v2 or Python."
     if version == "2":
         return "AutoHotkey v2 is required to save or run this AHK v2 script."
     return "AutoHotkey is required to save or run AutoHotkey scripts."
@@ -1282,6 +1186,7 @@ if __name__ == "__main__":
 
 def generate_python_launcher(script_path):
     script_path = Path(script_path)
+    fallback_packages = "pynput mss Pillow pytesseract opencv-python numpy pygame sounddevice soundcard"
     return "\n".join([
         "@echo off",
         "setlocal EnableExtensions",
@@ -1311,19 +1216,41 @@ def generate_python_launcher(script_path):
         "  exit /b 9009",
         ")",
         "echo [OK] Python found: %PY_CMD%",
-        "%PY_CMD% -c \"import pynput\" >nul 2>&1",
+        "set \"REQ_FILE=%~dp0..\\requirements.txt\"",
+        "echo.",
+        "echo [SETUP] Installing/checking CodeHub Python requirements...",
+        "if exist \"%REQ_FILE%\" (",
+        "  echo Using requirements: %REQ_FILE%",
+        "  %PY_CMD% -m pip install --upgrade pip",
+        "  %PY_CMD% -m pip install -r \"%REQ_FILE%\"",
+        ") else (",
+        "  echo requirements.txt not found next to CodeHub, using built-in package list.",
+        f"  %PY_CMD% -m pip install --upgrade pip {fallback_packages}",
+        ")",
         "if errorlevel 1 (",
         "  echo.",
-        "  echo [MISSING] This macro needs the Python package: pynput",
-        "  echo Command: %PY_CMD% -m pip install pynput",
+        "  echo [ERROR] Requirement installation failed.",
+        "  echo Make sure Python was installed with pip enabled and internet access is available.",
+        "  echo If needed, run: %PY_CMD% -m ensurepip --upgrade",
+        "  pause",
+        "  exit /b 3",
+        ")",
+        "%PY_CMD% -c \"import pynput; import tkinter; print('runtime OK')\" >nul 2>&1",
+        "if errorlevel 1 (",
         "  echo.",
-        "  choice /C YN /M \"Install pynput now\"",
-        "  if errorlevel 2 exit /b 2",
-        "  %PY_CMD% -m pip install pynput",
+        "  echo [MISSING] Python runtime check failed.",
+        "  echo Trying ensurepip and full CodeHub requirements one more time...",
+        "  %PY_CMD% -m ensurepip --upgrade",
+        "  if exist \"%REQ_FILE%\" (",
+        "    %PY_CMD% -m pip install -r \"%REQ_FILE%\"",
+        "  ) else (",
+        f"    %PY_CMD% -m pip install {fallback_packages}",
+        "  )",
         "  if errorlevel 1 (",
-        "    echo [ERROR] Package install failed.",
+        "    echo [ERROR] Package install failed or Python is missing tkinter.",
+        "    echo Reinstall Python from python.org and make sure pip/tcl-tk are enabled.",
         "    pause",
-        "    exit /b 3",
+        "    exit /b 4",
         "  )",
         ")",
         "echo.",
@@ -1465,7 +1392,7 @@ class SaveRecordingDialog:
         name_e = ttk.Entry(b, textvariable=self.name_var, style="Dark.TEntry")
         name_e.pack(fill=X, pady=(4, 10))
         ttk.Label(b, text="Create script as", style="FieldLabel.TLabel").pack(anchor="w")
-        ttk.Combobox(b, textvariable=self.export_var, values=["Default", "AutoHotkey v2", "AutoHotkey v1", "Python"],
+        ttk.Combobox(b, textvariable=self.export_var, values=["Default", "AutoHotkey v2", "Python"],
                      state="readonly", style="Dark.TCombobox").pack(fill=X, pady=(4, 0))
         row = self.window.btn_row()
         ttk.Button(row, text="Cancel", style="Ghost.TButton", command=self.cancel).pack(side=RIGHT, padx=(6, 0))
@@ -1597,15 +1524,15 @@ class StatusBar(Frame):
 class CodeHubApp:
     def __init__(self):
         ensure_files()
-        create_desktop_shortcut()
         self.settings = read_json(SETTINGS_PATH, DEFAULT_SETTINGS)
-        if self.settings.get("default_export_kind") not in ("AutoHotkey v2", "AutoHotkey v1"):
+        if self.settings.get("default_export_kind") not in ("AutoHotkey v2", "Python"):
             self.settings["default_export_kind"] = "AutoHotkey v2"
         if "click_sounds_enabled" not in self.settings:
             self.settings["click_sounds_enabled"] = False
         if "tab_sounds_enabled" not in self.settings:
             self.settings["tab_sounds_enabled"] = False
         self.settings["loading_sound_enabled"] = True
+        self.settings["ahk_version"] = "2"
         write_json(SETTINGS_PATH, self.settings)
         apply_theme_to_palette(self.settings)
         self.recordings = read_json(RECORDINGS_PATH, {"recordings": []})
@@ -1648,8 +1575,7 @@ class CodeHubApp:
         self.fullscreen = BooleanVar(value=False)
         self.mode = StringVar(value="normal")
         self.default_export_kind = StringVar(value=self.settings.get("default_export_kind", "AutoHotkey v2"))
-        self.ahk_version = StringVar(value=str(self.settings.get("ahk_version", "2")))
-        self.ahk_path_v1 = StringVar(value=str(self.settings.get("ahk_path_v1", "")))
+        self.ahk_version = StringVar(value="2")
         self.ahk_path_v2 = StringVar(value=str(self.settings.get("ahk_path_v2", "")))
         self.export_dir_var = StringVar(value=self.settings.get("export_dir", str(EXPORT_DIR)))
         self.status = StringVar(value="Ready")
@@ -1687,8 +1613,6 @@ class CodeHubApp:
         self._last_recordings_mtime = None
         self.macro_locked = False
         self.macro_process = None
-        self.macro_log_path = None
-        self.macro_label = ""
         self.macro_lock_kind = "process"
         self.external_macro_pids = set()
         self.external_macro_paths = set()
@@ -1743,11 +1667,6 @@ class CodeHubApp:
             if detected_v2:
                 self.ahk_path_v2.set(detected_v2)
                 self.settings["ahk_path_v2"] = detected_v2
-        if not self.ahk_path_v1.get():
-            detected_v1 = find_ahk_exe("1")
-            if detected_v1:
-                self.ahk_path_v1.set(detected_v1)
-                self.settings["ahk_path_v1"] = detected_v1
         write_json(SETTINGS_PATH, self.settings)
 
         self._configure_styles()
@@ -1832,6 +1751,7 @@ class CodeHubApp:
                 self.root.focus_force()
                 self.root.update_idletasks()
                 self.force_taskbar_icon()
+                self.ensure_desktop_shortcut()
                 if self.auto_update.get():
                     self.root.after(1500, lambda: self.check_for_updates(auto=True))
             except Exception:
@@ -2180,6 +2100,37 @@ class CodeHubApp:
         except Exception:
             pass
 
+    def ensure_desktop_shortcut(self):
+        if os.name != "nt":
+            return
+        try:
+            if getattr(sys, "frozen", False):
+                exe_path = Path(sys.executable).resolve()
+            else:
+                exe_path = APP_ROOT / "CodeHub.exe"
+                if not exe_path.exists():
+                    exe_path = Path(r"F:\Auto Hotkey\Python\Apps\CodeHub.exe")
+            if not exe_path.exists():
+                return
+            ps = (
+                "$desktop=[Environment]::GetFolderPath('Desktop');"
+                "$lnk=Join-Path $desktop 'CodeHub.lnk';"
+                "$shell=New-Object -ComObject WScript.Shell;"
+                "$s=$shell.CreateShortcut($lnk);"
+                f"$s.TargetPath={json.dumps(str(exe_path))};"
+                f"$s.WorkingDirectory={json.dumps(str(exe_path.parent))};"
+                f"$s.IconLocation={json.dumps(str(exe_path) + ',0')};"
+                "$s.Save();"
+            )
+            subprocess.Popen(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", ps],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=hidden_process_flags(),
+            )
+        except Exception:
+            pass
+
     #  Styles 
 
     def _configure_styles(self):
@@ -2336,10 +2287,10 @@ class CodeHubApp:
         Frame(self.root, bg=C["border"], height=1).pack(fill=X, side="bottom")
 
         # Main body
-        body = Frame(self.root, bg=C["bg"])
-        body.pack(fill=BOTH, expand=True)
+        self.body = Frame(self.root, bg=C["bg"])
+        self.body.pack(fill=BOTH, expand=True)
 
-        self.tabs = ttk.Notebook(body)
+        self.tabs = ttk.Notebook(self.body)
         self.tabs.pack(fill=BOTH, expand=True, padx=0, pady=0)
 
         self.tabs.add(self._recorder_tab(), text="  Recorder  ")
@@ -2412,7 +2363,7 @@ class CodeHubApp:
 
         ttk.Label(ctrl, text="Export as", style="PanelMuted2.TLabel").grid(row=0, column=2, sticky="w", padx=(0, 6))
         ttk.Combobox(ctrl, textvariable=self.default_export_kind,
-                     values=["AutoHotkey v2", "AutoHotkey v1", "Python"],
+                     values=["AutoHotkey v2", "Python"],
                      width=15, state="readonly").grid(row=0, column=3, padx=(0, 16))
 
         self.start_button = ttk.Button(ctrl, text="  F1  Start Recording",
@@ -2869,15 +2820,14 @@ class CodeHubApp:
         self._section(pad, "AutoHotkey Requirement")
         ahk_info = ttk.Label(
             pad,
-            text="CodeHub now requires AutoHotkey. Pick whether exports/runs should use AutoHotkey v2 or v1.1. If CodeHub cannot find any AutoHotkey install, it will fail on startup.",
+            text="CodeHub supports AutoHotkey v2 and Python exports. AutoHotkey v1 is no longer supported because its GUI/runtime behavior is too unreliable across PCs.",
             style="Muted.TLabel",
             wraplength=900,
         )
         ahk_info.pack(anchor="w", pady=(2, 6))
         ahkr = Frame(pad, bg=C["bg"], pady=4)
         ahkr.pack(fill=X)
-        ttk.Label(ahkr, text="Use:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
-        ttk.Combobox(ahkr, textvariable=self.ahk_version, values=["2", "1"], state="readonly", width=5).pack(side=LEFT, padx=(0, 10))
+        ttk.Label(ahkr, text="Use: AutoHotkey v2", style="Muted.TLabel").pack(side=LEFT, padx=(0, 10))
         ttk.Button(ahkr, text="Auto Detect", style="Ghost.TButton", command=self.autodetect_ahk_paths).pack(side=LEFT, padx=(0, 8))
         ttk.Button(ahkr, text="Save AutoHotkey Settings", style="Accent.TButton", command=self.save_permissions).pack(side=LEFT)
 
@@ -2886,12 +2836,6 @@ class CodeHubApp:
         ttk.Label(ahk2, text="AHK v2:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
         ttk.Entry(ahk2, textvariable=self.ahk_path_v2).pack(side=LEFT, fill=X, expand=True, padx=(0, 8))
         ttk.Button(ahk2, text="Browse", style="Ghost.TButton", command=lambda: self.choose_ahk_path("2")).pack(side=RIGHT)
-
-        ahk1 = Frame(pad, bg=C["bg"], pady=4)
-        ahk1.pack(fill=X)
-        ttk.Label(ahk1, text="AHK v1:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
-        ttk.Entry(ahk1, textvariable=self.ahk_path_v1).pack(side=LEFT, fill=X, expand=True, padx=(0, 8))
-        ttk.Button(ahk1, text="Browse", style="Ghost.TButton", command=lambda: self.choose_ahk_path("1")).pack(side=RIGHT)
 
         self._section(pad, "Appearance")
         ar = Frame(pad, bg=C["bg"], pady=4)
@@ -3525,25 +3469,15 @@ class CodeHubApp:
                 return
             code = generate_ahk(rec["events"], rec["mode"], rec["name"])
             path = export_dir / f"{safe_name(rec['name'])}.ahk"
-        elif export_kind == "AutoHotkey v1":
-            if not self.ensure_ahk_available_for_action("1", "save an AutoHotkey v1 script"):
-                return
-            code = generate_ahk_v1(rec["events"], rec["mode"], rec["name"])
-            path = export_dir / f"{safe_name(rec['name'])}.ahk"
         else:
             code = generate_python(rec["events"], rec["mode"], rec["name"])
             path = export_dir / f"{safe_name(rec['name'])}.py"
         with open(path, "w", encoding="utf-8") as f:
             f.write(code)
         if path.suffix.lower() == ".py":
-            # Python exports are now standalone .py files. No .cmd launcher is created.
-            rec.pop("python_launcher_path", None)
-            try:
-                old_launcher = path.with_suffix(".cmd")
-                if old_launcher.exists():
-                    old_launcher.unlink()
-            except Exception:
-                pass
+            launcher_path = path.with_suffix(".cmd")
+            launcher_path.write_text(generate_python_launcher(path), encoding="utf-8", newline="\r\n")
+            rec["python_launcher_path"] = str(launcher_path)
         rec["export_path"] = str(path)
         rec["export_missing"] = False
         write_json(RECORDINGS_PATH, self.recordings)
@@ -3553,7 +3487,10 @@ class CodeHubApp:
         self.editor_path.set(str(path))
         self.tabs.select(1)
         self.refresh_files()
-        messagebox.showinfo(APP_NAME, f"Exported:\n{path}")
+        if path.suffix.lower() == ".py":
+            messagebox.showinfo(APP_NAME, f"Exported:\n{path}\n\nPython launcher:\n{path.with_suffix('.cmd')}")
+        else:
+            messagebox.showinfo(APP_NAME, f"Exported:\n{path}")
 
     def delete_recording(self):
         idx, rec = self.selected_recording()
@@ -3620,7 +3557,7 @@ class CodeHubApp:
             self.file_tree.delete(row)
         export_dir = resolve_app_path(self.export_dir_var.get()) if hasattr(self, "export_dir_var") else EXPORT_DIR
         export_dir.mkdir(parents=True, exist_ok=True)
-        files = sorted([p for p in export_dir.iterdir() if p.is_file() and p.suffix.lower() in {".py",".ahk",".txt"}])
+        files = sorted([p for p in export_dir.iterdir() if p.is_file() and p.suffix.lower() in {".py",".ahk",".cmd",".txt"}])
         for p in files:
             if p.suffix.lower() == ".ahk":
                 self.repair_generated_ahk_v1_loader(p, quiet=True)
@@ -3713,7 +3650,7 @@ class CodeHubApp:
         snapshot = {
             f"{p}|{p.stat().st_mtime}|{p.stat().st_size}"
             for p in export_dir.iterdir()
-            if p.is_file() and p.suffix.lower() in {".py",".ahk",".txt"}
+            if p.is_file() and p.suffix.lower() in {".py",".ahk",".cmd",".txt"}
         }
         if snapshot != self._last_file_snapshot:
             self._last_file_snapshot = snapshot
@@ -4260,10 +4197,17 @@ class CodeHubApp:
                     return
                 if not self.ensure_python_script_requirements(path, py_for_packages):
                     return
-                proc = self.launch_python_script_hidden(path, py_for_packages)
+                proc = self.launch_python_script_console(path, py_for_packages)
             elif path.suffix.lower() == ".ahk":
-                self.repair_generated_ahk_v1_loader(path)
                 version = ahk_required_version_for_file(path, self.ahk_version.get() or "2")
+                if version == "1":
+                    messagebox.showerror(
+                        APP_NAME,
+                        "AutoHotkey v1 scripts are no longer supported in CodeHub.\n\n"
+                        "Re-export this macro as AutoHotkey v2 or Python.",
+                        parent=self.root,
+                    )
+                    return
                 ahk = self.selected_ahk_exe(version)
                 if not ahk:
                     self.missing_ahk_dialog(version, f"run {path.name}")
@@ -4288,39 +4232,84 @@ class CodeHubApp:
         except Exception as e:
             messagebox.showerror(APP_NAME, f"Could not run script:\n{e}")
 
-    def launch_python_script_hidden(self, path, py_cmd):
-        """Run generated Python macros without opening a command prompt.
-
-        Errors go to a log file instead of a visible console. The lock overlay/panic
-        window reads this log if the process crashes.
-        """
-        log_dir = DATA_DIR / "script_logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
+    def launch_python_script_console(self, path, py_cmd):
+        runner_dir = DATA_DIR / "script_runners"
+        runner_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = log_dir / f"{safe_name(path.stem)}_{stamp}.log"
-
-        # Prefer pythonw.exe so Windows does not create a console window.
-        run_cmd = pythonw_command() or py_cmd
-        if not run_cmd:
-            run_cmd = py_cmd
-
-        self.macro_log_path = log_path
-        self.macro_label = path.name
-
-        log = open(log_path, "w", encoding="utf-8", buffering=1)
-        log.write(f"CodeHub hidden Python run\n")
-        log.write(f"Script : {path}\n")
-        log.write(f"Folder : {path.parent}\n")
-        log.write(f"Python : {command_to_cmdline(run_cmd)}\n")
-        log.write("-" * 72 + "\n")
-
+        runner = runner_dir / f"run_{safe_name(path.stem)}_{stamp}.cmd"
+        py_line = command_to_cmdline(py_cmd)
+        script_line = subprocess.list2cmdline([str(path)])
+        req_path = APP_ROOT / "requirements.txt"
+        fallback_packages = "pynput mss Pillow pytesseract opencv-python numpy pygame sounddevice soundcard"
+        runner.write_text(
+            "\n".join([
+                "@echo off",
+                "setlocal",
+                f"title CodeHub Script Runner - {path.name}",
+                "color 0A",
+                "echo ================================================================",
+                "echo                    CodeHub Script Runner",
+                "echo ================================================================",
+                f"echo Script : {path}",
+                f"echo Folder : {path.parent}",
+                f"echo Python : {py_line}",
+                "echo.",
+                "echo [1/3] Checking Python...",
+                f"{py_line} --version",
+                "if errorlevel 1 (",
+                "  echo.",
+                "  echo [ERROR] Python could not start on this PC.",
+                "  echo Install Python 3 from https://www.python.org/downloads/windows/",
+                "  pause",
+                "  exit /b 9009",
+                ")",
+                "echo.",
+                "echo [2/3] Checking/installing CodeHub macro runtime...",
+                f"if exist \"{req_path}\" (",
+                f"  echo Using requirements: {req_path}",
+                f"  {py_line} -m pip install --upgrade pip",
+                f"  {py_line} -m pip install -r \"{req_path}\"",
+                ") else (",
+                "  echo requirements.txt not found, using built-in package list.",
+                f"  {py_line} -m pip install --upgrade pip {fallback_packages}",
+                ")",
+                "if errorlevel 1 (",
+                "  echo.",
+                "  echo [ERROR] Requirement installation failed.",
+                "  echo Make sure pip is enabled and this PC has internet access.",
+                "  pause",
+                "  exit /b 3",
+                ")",
+                f"{py_line} -c \"import pynput; import tkinter; print('runtime OK')\"",
+                "if errorlevel 1 (",
+                "  echo.",
+                "  echo [ERROR] Runtime import check failed even after installing requirements.",
+                "  echo Reinstall Python from python.org and make sure pip/tcl-tk are enabled.",
+                "  pause",
+                "  exit /b 4",
+                ")",
+                "echo.",
+                "echo [3/3] Launching script...",
+                "echo F1 start ^| F2 stop ^| Numpad 5 exit",
+                "echo ---------------------------------------------------------------",
+                f"{py_line} {script_line}",
+                "set CODEHUB_SCRIPT_EXIT=%ERRORLEVEL%",
+                "echo ---------------------------------------------------------------",
+                "echo Script exited with code %CODEHUB_SCRIPT_EXIT%.",
+                "if not \"%CODEHUB_SCRIPT_EXIT%\"==\"0\" (",
+                "  echo.",
+                "  echo The script crashed or Python rejected it. The error should be above.",
+                "  pause",
+                ")",
+                "exit /b %CODEHUB_SCRIPT_EXIT%",
+            ]),
+            encoding="utf-8",
+            newline="\r\n",
+        )
         return subprocess.Popen(
-            run_cmd + [str(path)],
+            ["cmd.exe", "/c", str(runner)],
             cwd=str(path.parent),
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=log,
-            creationflags=hidden_process_flags(),
+            creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
         )
 
     def repair_generated_ahk_v1_loader(self, path, quiet=False):
@@ -4426,7 +4415,6 @@ class CodeHubApp:
         self.macro_locked = True
         self.macro_process = proc
         self.macro_lock_kind = "process"
-        self.macro_label = label
         self.show_lock_overlay(label)
         self.root.after(450, lambda: self.warn_if_macro_exited_immediately(proc, label))
         self.root.after(900, self.poll_macro_process)
@@ -4440,7 +4428,14 @@ class CodeHubApp:
             return
         if code is None:
             return
-        self.handle_macro_exit(code, label)
+        self.status.set(f"{label} exited immediately ({code})")
+        messagebox.showwarning(
+            APP_NAME,
+            f"{label} closed immediately.\n\n"
+            "That usually means Python/AutoHotkey rejected the script or a dependency is missing.\n\n"
+            "For Python scripts, CodeHub now opens a Script Runner command prompt with the real error/logs.",
+            parent=self.root,
+        )
 
     def lock_for_external_macro(self, pids, paths):
         if self.macro_locked:
@@ -4451,7 +4446,6 @@ class CodeHubApp:
         self.external_macro_pids = set(pids)
         self.external_macro_paths = {str(p) for p in paths}
         label = ", ".join(sorted(Path(p).name for p in self.external_macro_paths)) or "external macro"
-        self.macro_label = label
         self.status.set(f"Detected: {label}")
         self.show_lock_overlay(label)
         self.root.after(900, self.poll_macro_process)
@@ -4459,44 +4453,25 @@ class CodeHubApp:
     def show_lock_overlay(self, label):
         if self.lock_overlay and self.lock_overlay.winfo_exists():
             return
-
-        overlay = Frame(self.root, bg="#030608")
-        # Keep the custom title bar usable while the macro is locked.
-        # The overlay starts below it, so minimize/maximize/close still work.
-        overlay.place(x=0, y=50, relwidth=1, relheight=1, height=-50)
+        parent = getattr(self, "body", self.root)
+        overlay = Frame(parent, bg="#030608")
+        overlay.place(x=0, y=0, relwidth=1, relheight=1)
         overlay.lift()
         overlay.bind("<Button>", lambda _: "break")
         overlay.bind("<Key>", lambda _: "break")
-        self.root.update_idletasks()
-
-        panel = Frame(overlay, bg=C["panel2"], padx=34, pady=28)
+        parent.update_idletasks()
+        panel = Frame(overlay, bg=C["panel2"], padx=32, pady=28)
         panel.place(relx=0.5, rely=0.5, anchor="center")
-
-        ttk.Label(panel, text="SCRIPT LOCKED", style="LockPanel.TLabel").pack()
-        self.lock_status_var = StringVar(value=f"Running: {label}\n\nCodeHub is locked while the macro is active.")
-        ttk.Label(panel, textvariable=self.lock_status_var, style="LockMuted.TLabel", justify="center").pack(pady=(10, 12))
-
-        ttk.Label(
-            panel,
-            text="Use F2/Numpad5 in the macro, or press the button below to stop and unlock.",
-            style="LockMuted.TLabel",
-            justify="center",
-        ).pack()
-
-        ttk.Button(panel, text="Force Shutdown / Unlock", style="Red.TButton",
-                   command=self.force_shutdown_macro).pack(pady=(18, 0))
-
+        ttk.Label(panel, text="LOCKED", style="LockPanel.TLabel").pack()
+        ttk.Label(panel, text=f"Running: {label}\n\nClose the macro to continue.",
+                  style="LockMuted.TLabel", justify="center").pack(pady=(10,0))
+        overlay.focus_set()
         self.lock_overlay = overlay
         self.lock_window = overlay
-
-    def show_macro_panic_window(self, label):
-        # Removed by request: the lock panel already has a Force Shutdown / Unlock button.
-        return
 
     def poll_macro_process(self):
         if not self.macro_locked:
             return
-
         if self.macro_lock_kind == "external":
             running = self.find_running_export_macros()
             active = {pid for pid, _ in running}
@@ -4506,70 +4481,10 @@ class CodeHubApp:
                 return
             self.unlock_after_macro()
             return
-
-        if self.macro_process:
-            code = self.macro_process.poll()
-            if code is None:
-                self.root.after(700, self.poll_macro_process)
-                return
-            self.handle_macro_exit(code, self.macro_label or "macro")
+        if self.macro_process and self.macro_process.poll() is None:
+            self.root.after(700, self.poll_macro_process)
             return
-
         self.unlock_after_macro()
-
-    def read_macro_log_tail(self, max_chars=6000):
-        path = getattr(self, "macro_log_path", None)
-        if not path:
-            return ""
-        try:
-            data = Path(path).read_text(encoding="utf-8", errors="replace")
-            return data[-max_chars:]
-        except Exception:
-            return ""
-
-    def handle_macro_exit(self, code, label):
-        log_tail = self.read_macro_log_tail()
-        self.unlock_after_macro()
-        if code and code != 0:
-            self.status.set(f"{label} crashed ({code})")
-            msg = f"{label} crashed or exited with code {code}."
-            if log_tail.strip():
-                msg += "\n\nLast log output:\n" + log_tail
-            else:
-                msg += "\n\nNo console window was opened. No error text was captured."
-            messagebox.showerror(APP_NAME, msg, parent=self.root)
-        else:
-            self.status.set("Ready")
-
-    def force_shutdown_macro(self):
-        label = getattr(self, "macro_label", "") or "macro"
-        try:
-            if self.macro_process and self.macro_process.poll() is None:
-                self.macro_process.terminate()
-                try:
-                    self.macro_process.wait(timeout=1.5)
-                except Exception:
-                    self.macro_process.kill()
-        except Exception:
-            pass
-
-        # Best-effort cleanup for externally detected macros only.
-        # Do NOT kill every python.exe/AutoHotkey.exe on the PC because CodeHub
-        # may be running from Python while you are testing.
-        try:
-            if os.name == "nt":
-                for pid in list(getattr(self, "external_macro_pids", set())):
-                    subprocess.run(
-                        ["taskkill", "/F", "/PID", str(pid)],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        creationflags=hidden_process_flags(),
-                    )
-        except Exception:
-            pass
-
-        self.unlock_after_macro()
-        self.status.set(f"Force-unlocked after stopping {label}")
 
     def unlock_after_macro(self):
         self.macro_locked = False
@@ -4577,23 +4492,14 @@ class CodeHubApp:
         self.macro_lock_kind = "process"
         self.external_macro_pids = set()
         self.external_macro_paths = set()
-
         if self.lock_overlay and self.lock_overlay.winfo_exists():
             try:
                 self.lock_overlay.grab_release()
             except Exception:
                 pass
             self.lock_overlay.destroy()
-
-        try:
-            if getattr(self, "panic_window", None) and self.panic_window.winfo_exists():
-                self.panic_window.destroy()
-        except Exception:
-            pass
-
         self.lock_overlay = None
         self.lock_window = None
-        self.panic_window = None
         self.status.set("Ready")
 
     def watch_external_macros(self):
@@ -4777,7 +4683,7 @@ class CodeHubApp:
             return
         path = filedialog.askopenfilename(
             initialdir=str(resolve_app_path(self.export_dir_var.get())),
-            filetypes=[("Scripts", "*.py *.ahk *.txt"), ("All files", "*.*")])
+            filetypes=[("Scripts", "*.py *.ahk *.cmd *.txt"), ("All files", "*.*")])
         if not path:
             return
         self.load_script(Path(path))
@@ -4839,7 +4745,7 @@ class CodeHubApp:
             path = filedialog.asksaveasfilename(
                 initialdir=str(resolve_app_path(self.export_dir_var.get())),
                 defaultextension=".py",
-                filetypes=[("Scripts", "*.py *.ahk *.txt"), ("All files", "*.*")])
+                filetypes=[("Scripts", "*.py *.ahk *.cmd *.txt"), ("All files", "*.*")])
             if not path:
                 return False
 
@@ -5207,7 +5113,7 @@ root.mainloop()
             return
         export_dir = resolve_app_path(self.export_dir_var.get()) if hasattr(self, "export_dir_var") else EXPORT_DIR
         export_dir.mkdir(parents=True, exist_ok=True)
-        values = [str(p) for p in sorted(export_dir.iterdir()) if p.is_file() and p.suffix.lower() in {".py", ".ahk", ".txt"}]
+        values = [str(p) for p in sorted(export_dir.iterdir()) if p.is_file() and p.suffix.lower() in {".py", ".ahk", ".cmd", ".txt"}]
         self.builder_target_combo.configure(values=values)
         if self.builder_target_var.get() not in values and values:
             self.builder_target_var.set(values[0])
@@ -5775,6 +5681,7 @@ root.mainloop()
             self.refresh_files()
 
     def choose_ahk_path(self, version):
+        version = "2"
         path = filedialog.askopenfilename(
             title=f"Choose AutoHotkey v{version} executable",
             filetypes=[("AutoHotkey executable", "AutoHotkey*.exe"), ("Executable", "*.exe"), ("All files", "*.*")],
@@ -5791,43 +5698,34 @@ root.mainloop()
             )
             if not ok:
                 return
-        if str(version) == "1":
-            self.ahk_path_v1.set(path)
-        else:
-            self.ahk_path_v2.set(path)
+        self.ahk_path_v2.set(path)
         self.save_permissions()
 
     def autodetect_ahk_paths(self):
         v2 = find_ahk_exe("2")
-        v1 = find_ahk_exe("1")
         if v2:
             self.ahk_path_v2.set(v2)
-        if v1:
-            self.ahk_path_v1.set(v1)
-        if not v2 and not v1:
-            messagebox.showerror(APP_NAME, "AutoHotkey was not found. Install AutoHotkey v2 or v1.1, then restart CodeHub.", parent=self.root)
+        if not v2:
+            messagebox.showerror(APP_NAME, "AutoHotkey v2 was not found. Install AutoHotkey v2, then restart CodeHub.", parent=self.root)
             return
-        if v2:
-            self.ahk_version.set("2")
-        elif v1:
-            self.ahk_version.set("1")
+        self.ahk_version.set("2")
         self.save_permissions()
-        messagebox.showinfo(APP_NAME, "AutoHotkey detection complete.", parent=self.root)
+        messagebox.showinfo(APP_NAME, "AutoHotkey v2 detection complete.", parent=self.root)
 
 
     def missing_ahk_dialog(self, version=None, action="use AutoHotkey scripts"):
-        version = str(version or self.ahk_version.get() or "").strip()
+        version = "2"
         missing = describe_missing_ahk(version)
         detail = (
             f"{missing}\n\n"
             f"CodeHub can still open and Python scripts still work.\n\n"
-            f"Missing: AutoHotkey v{version if version in ('1','2') else '1 or v2'}\n"
+            "Missing: AutoHotkey v2\n"
             f"Action blocked: {action}\n\n"
-            "Install AutoHotkey, restart CodeHub, then try again.\n\n"
+            "Install AutoHotkey v2, restart CodeHub, then try again.\n\n"
             "Open the AutoHotkey download page now?"
         )
         self.missing_runtime_dialog(
-            f"AutoHotkey v{version if version in ('1', '2') else '1 or v2'}",
+            "AutoHotkey v2",
             ahk_install_url(version),
             action,
             detail,
@@ -5864,24 +5762,23 @@ root.mainloop()
         ttk.Button(row, text="Close", style="Ghost.TButton", command=win.destroy).pack(side=RIGHT)
 
     def ensure_ahk_available_for_action(self, version=None, action="use AutoHotkey"):
-        version = str(version or self.ahk_version.get() or "2")
+        version = "2"
         if self.selected_ahk_exe(version):
             return True
         self.missing_ahk_dialog(version, action)
         return False
 
     def selected_ahk_exe(self, version=None):
-        version = str(version or self.ahk_version.get() or "2")
-        custom = self.ahk_path_v2.get() if version == "2" else self.ahk_path_v1.get()
-        ahk = find_ahk_exe(version, custom)
+        custom = self.ahk_path_v2.get()
+        ahk = find_ahk_exe("2", custom)
         return ahk
 
     def save_permissions(self):
         self.settings["ai_can_edit"] = self.ai_can_edit.get()
         self.settings["ai_can_delete"] = self.ai_can_delete.get()
         self.settings["ai_can_run"] = self.ai_can_run.get()
-        self.settings["ahk_version"] = self.ahk_version.get()
-        self.settings["ahk_path_v1"] = self.ahk_path_v1.get().strip()
+        self.ahk_version.set("2")
+        self.settings["ahk_version"] = "2"
         self.settings["ahk_path_v2"] = self.ahk_path_v2.get().strip()
         self.settings["record_screenshots"] = self.record_screenshots.get()
         self.settings["record_replay_video"] = self.record_replay_video.get()
@@ -5981,20 +5878,95 @@ root.mainloop()
 
     def download_and_apply_update(self, latest_sha, asset_url=None, latest_tag=None):
         if not getattr(sys, "frozen", False):
-            messagebox.showinfo(APP_NAME, "Source mode detected. Use Run Local Updater to rebuild the exe.")
+            messagebox.showinfo(APP_NAME, "Source mode detected. CodeHub will run the local updater/rebuilder instead of replacing the running source script.")
+            self.run_local_updater()
             return
 
         exe_path = Path(sys.executable).resolve()
         app_dir = exe_path.parent
         tmp_exe = app_dir / "CodeHub_update_tmp.exe"
         cmd_path = app_dir / "CodeHub_apply_update.cmd"
+        ps1_path = app_dir / "CodeHub_apply_update.ps1"
         current_pid = os.getpid()
 
         asset_url = asset_url or GITHUB_EXE_URL
-        self.settings["last_update_sha"] = str(latest_sha or "").strip()
-        if latest_tag:
-            self.settings["last_update_tag"] = str(latest_tag)
-        write_json(SETTINGS_PATH, self.settings)
+        latest_sha = str(latest_sha or "").strip()
+        latest_tag = str(latest_tag or "")
+        settings_path = SETTINGS_PATH
+
+        ps_script = textwrap.dedent(f"""\
+    $ErrorActionPreference = 'Stop'
+    $Host.UI.RawUI.WindowTitle = 'CodeHub Update'
+    function Say($m) {{ Write-Host "[CodeHub] $m" -ForegroundColor Green }}
+    function Fail($m) {{ Write-Host "[CodeHub] ERROR: $m" -ForegroundColor Red; Read-Host 'Press Enter to close'; exit 1 }}
+
+    Set-Location -LiteralPath "{app_dir}"
+    Say "downloading latest commit build..."
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -Uri "{asset_url}" -OutFile "{tmp_exe}" -UseBasicParsing
+    if (!(Test-Path -LiteralPath "{tmp_exe}")) {{ Fail "download did not create a file" }}
+    $size = (Get-Item -LiteralPath "{tmp_exe}").Length
+    if ($size -lt 1048576) {{ Fail "downloaded file is too small ($size bytes), refusing to replace the app" }}
+    Say "downloaded $size bytes"
+
+    Say "waiting for old CodeHub process to close..."
+    while (Get-Process -Id {current_pid} -ErrorAction SilentlyContinue) {{
+        Start-Sleep -Milliseconds 500
+    }}
+
+    Say "replacing executable with retry loop..."
+    $copied = $false
+    for ($i = 1; $i -le 20; $i++) {{
+        try {{
+            Copy-Item -LiteralPath "{tmp_exe}" -Destination "{exe_path}" -Force
+            $copied = $true
+            break
+        }} catch {{
+            Say "replace attempt $i failed, retrying..."
+            Start-Sleep -Milliseconds 700
+        }}
+    }}
+    if (!$copied) {{ Fail "could not replace CodeHub.exe" }}
+
+    Say "saving installed commit marker..."
+    $settingsFile = "{settings_path}"
+    try {{
+        $dir = Split-Path -Parent $settingsFile
+        if (!(Test-Path -LiteralPath $dir)) {{ New-Item -ItemType Directory -Path $dir -Force | Out-Null }}
+        if (Test-Path -LiteralPath $settingsFile) {{
+            $json = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+        }} else {{
+            $json = [pscustomobject]@{{}}
+        }}
+        $json | Add-Member -NotePropertyName last_update_sha -NotePropertyValue "{latest_sha}" -Force
+        $json | Add-Member -NotePropertyName last_update_tag -NotePropertyValue "{latest_tag}" -Force
+        $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settingsFile -Encoding UTF8
+    }} catch {{
+        Say "could not save settings marker, but the exe was replaced"
+    }}
+
+    Say "creating desktop shortcut..."
+    try {{
+        $desktop = [Environment]::GetFolderPath('Desktop')
+        $shortcutPath = Join-Path $desktop 'CodeHub.lnk'
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = "{exe_path}"
+        $shortcut.WorkingDirectory = "{app_dir}"
+        $shortcut.IconLocation = "{exe_path},0"
+        $shortcut.Save()
+    }} catch {{
+        Say "shortcut creation failed"
+    }}
+
+    Say "restarting CodeHub..."
+    Start-Process -FilePath "{exe_path}" -WorkingDirectory "{app_dir}"
+    Remove-Item -LiteralPath "{tmp_exe}" -Force -ErrorAction SilentlyContinue
+    Say "updated successfully, closing updater..."
+    Start-Sleep -Seconds 1
+    exit 0
+    """)
+        ps1_path.write_text(ps_script, encoding="utf-8")
 
         script = textwrap.dedent(f"""\
     @echo off
@@ -6002,40 +5974,7 @@ root.mainloop()
     color 0A
     title CodeHub Update
     cd /d "{app_dir}"
-
-    echo [CodeHub] downloading latest package from GitHub...
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{asset_url}' -OutFile '{tmp_exe}'"
-    if errorlevel 1 (
-        echo [CodeHub] download failed.
-        pause
-        exit /b 1
-    )
-
-    echo [CodeHub] waiting for app to close...
-    :WAIT_APP
-    tasklist /FI "PID eq {current_pid}" | find "{current_pid}" >nul
-    if not errorlevel 1 (
-        timeout /t 1 /nobreak >nul
-        goto WAIT_APP
-    )
-
-    echo [CodeHub] replacing executable...
-    copy /y "{tmp_exe}" "{exe_path}" >nul
-    if errorlevel 1 (
-        echo [CodeHub] replace failed.
-        pause
-        exit /b 1
-    )
-
-    echo [CodeHub] restarting CodeHub...
-    start "" /D "{app_dir}" "{exe_path.name}"
-
-    echo [CodeHub] cleaning temp file...
-    del /f /q "{tmp_exe}" >nul 2>&1
-
-    echo [CodeHub] updated and closing...
-    timeout /t 1 /nobreak >nul
-    exit
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{ps1_path}"
     """)
 
         cmd_path.write_text(script, encoding="utf-8")
@@ -6051,14 +5990,11 @@ root.mainloop()
                 pass
 
         if os.name == "nt":
-            try:
-                os.startfile(str(cmd_path))
-            except Exception:
-                subprocess.Popen(
-                    ["cmd.exe", "/k", "call", str(cmd_path)],
-                    cwd=str(app_dir),
-                    creationflags=subprocess.CREATE_NEW_CONSOLE
-                )
+            subprocess.Popen(
+                ["cmd.exe", "/k", "call", str(cmd_path)],
+                cwd=str(app_dir),
+                creationflags=subprocess.CREATE_NEW_CONSOLE
+            )
         else:
             subprocess.Popen(["sh", str(cmd_path)], cwd=str(app_dir))
 
@@ -6109,6 +6045,8 @@ root.mainloop()
 
     echo [CodeHub] restarting CodeHub...
     if exist "{exe_path}" (
+        echo [CodeHub] making sure desktop shortcut exists...
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$desktop=[Environment]::GetFolderPath('Desktop'); $lnk=Join-Path $desktop 'CodeHub.lnk'; $shell=New-Object -ComObject WScript.Shell; $s=$shell.CreateShortcut($lnk); $s.TargetPath='{exe_path}'; $s.WorkingDirectory='{restart_dir}'; $s.IconLocation='{exe_path},0'; $s.Save()"
         start "" /D "{restart_dir}" "{exe_path.name}"
     ) else (
         echo [CodeHub] CodeHub.exe not found after update.
@@ -6134,14 +6072,11 @@ root.mainloop()
                 pass
 
         if os.name == "nt":
-            try:
-                os.startfile(str(cmd_path))
-            except Exception:
-                subprocess.Popen(
-                    ["cmd.exe", "/k", "call", str(cmd_path)],
-                    cwd=str(app_dir),
-                    creationflags=subprocess.CREATE_NEW_CONSOLE
-                )
+            subprocess.Popen(
+                ["cmd.exe", "/k", "call", str(cmd_path)],
+                cwd=str(app_dir),
+                creationflags=subprocess.CREATE_NEW_CONSOLE
+            )
         else:
             subprocess.Popen(["sh", str(cmd_path)], cwd=str(app_dir))
 
@@ -6820,8 +6755,6 @@ CodeHub • Built by Catchallcat5382
         self.root.attributes("-fullscreen", self.fullscreen.get())
 
     def close(self):
-        if getattr(self, "macro_locked", False):
-            self.force_shutdown_macro()
         if self.current_editor_file and not Path(self.current_editor_file).exists():
             self.current_editor_file = None
             self.current_editor_saved_text = ""
