@@ -62,8 +62,9 @@ GITHUB_REPO = "Catchallcat5382/CodeHub"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
 GITHUB_API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest/download/CodeHub.exe"
+GITHUB_MAIN_EXE_URL = f"https://github.com/{GITHUB_REPO}/raw/main/CodeHub.exe"
 BUILD_COMMIT = "local-build"
-BUILD_NUMBER = 25
+BUILD_NUMBER = 26
 MAX_REPLAY_FPS = 240
 REPLAY_FPS_CHOICES = ["15", "20", "24", "30", "60", "120", "144", "240"]
 
@@ -85,6 +86,12 @@ def build_version(build_number=None):
 def get_live_build_number():
     # Versions are release-based, not commit-count-based.
     return BUILD_NUMBER
+
+def current_update_sha():
+    sha = str(BUILD_COMMIT or "").strip()
+    if sha and sha != "local-build":
+        return sha
+    return ""
 
 if getattr(sys, "frozen", False):
     APP_ROOT = Path(sys.executable).resolve().parent
@@ -456,6 +463,10 @@ def required_packages_for_python_script(path):
     if "from pynput import" in text and ("pynput", "pynput") not in packages:
         packages.append(("pynput", "pynput"))
     return packages
+
+
+def command_to_cmdline(command):
+    return subprocess.list2cmdline([str(part) for part in command])
 
 
 def missing_python_modules(py_cmd, modules):
@@ -904,14 +915,13 @@ def generate_ahk_v1(events, mode, script_name):
         "",
         "ShowCodeHubLoader(durationMs := 900, title := \"Loading macro\")",
         "{",
-        "    global LoaderStatus, LoaderBar",
         "    Gui, Loader:New, +AlwaysOnTop -Caption +ToolWindow",
         "    Gui, Loader:Color, 081019",
         "    Gui, Loader:Font, s10 cEAF6FF, Segoe UI",
         "    Gui, Loader:Add, Text, w300 Center, AutoHotkey v1.1 - %title%",
         "    Gui, Loader:Font, s8 c8FD9FF, Segoe UI",
-        "    Gui, Loader:Add, Text, vLoaderStatus w300 Center y+6, CodeHub AutoHotkey v1 loader",
-        "    Gui, Loader:Add, Progress, vLoaderBar w300 h10 y+10 Background182434 c33FF66 Range0-100, 0",
+        "    Gui, Loader:Add, Text, HwndLoaderStatusHwnd w300 Center y+6, CodeHub AutoHotkey v1 loader",
+        "    Gui, Loader:Add, Progress, HwndLoaderBarHwnd w300 h10 y+10 Background182434 c33FF66 Range0-100, 0",
         "    x := (A_ScreenWidth - 336) // 2",
         "    y := (A_ScreenHeight - 118) // 2",
         "    Gui, Loader:Show, NoActivate x%x% y%y% w336 h118",
@@ -920,8 +930,8 @@ def generate_ahk_v1(events, mode, script_name):
         "    Loop, %steps%",
         "    {",
         "        val := Floor((A_Index / steps) * 100)",
-        "        GuiControl, Loader:, LoaderBar, %val%",
-        "        GuiControl, Loader:, LoaderStatus, Indexing input timing... %val%`%",
+        "        GuiControl,, %LoaderBarHwnd%, %val%",
+        "        GuiControl,, %LoaderStatusHwnd%, Indexing input timing... %val%`%",
         "        Sleep, %delay%",
         "    }",
         "    Sleep, 350",
@@ -1172,8 +1182,67 @@ if __name__ == "__main__":
     WATERMARK = Watermark()
     WATERMARK.show()
     with keyboard.Listener(on_press=on_press) as listener:
-        listener.join()
+    listener.join()
 '''
+
+
+def generate_python_launcher(script_path):
+    script_path = Path(script_path)
+    return "\n".join([
+        "@echo off",
+        "setlocal EnableExtensions",
+        f"title CodeHub Python Launcher - {script_path.name}",
+        "color 0A",
+        "echo ================================================================",
+        "echo                    CodeHub Python Launcher",
+        "echo ================================================================",
+        f"echo Script: {script_path}",
+        "echo.",
+        "set \"PY_CMD=\"",
+        "py -3 --version >nul 2>&1",
+        "if not errorlevel 1 set \"PY_CMD=py -3\"",
+        "if \"%PY_CMD%\"==\"\" (",
+        "  python --version >nul 2>&1",
+        "  if not errorlevel 1 set \"PY_CMD=python\"",
+        ")",
+        "if \"%PY_CMD%\"==\"\" (",
+        "  echo [ERROR] Python 3 is not installed or not on PATH.",
+        "  echo.",
+        "  echo Install Python 3 from:",
+        "  echo https://www.python.org/downloads/windows/",
+        "  echo.",
+        "  powershell -NoProfile -ExecutionPolicy Bypass -Command \"Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('Python 3 is required to run this CodeHub macro. Click OK, then install Python from python.org/downloads/windows/.','CodeHub Python Macro')\" >nul 2>&1",
+        "  start \"\" \"https://www.python.org/downloads/windows/\"",
+        "  pause",
+        "  exit /b 9009",
+        ")",
+        "echo [OK] Python found: %PY_CMD%",
+        "%PY_CMD% -c \"import pynput\" >nul 2>&1",
+        "if errorlevel 1 (",
+        "  echo.",
+        "  echo [MISSING] This macro needs the Python package: pynput",
+        "  echo Command: %PY_CMD% -m pip install pynput",
+        "  echo.",
+        "  choice /C YN /M \"Install pynput now\"",
+        "  if errorlevel 2 exit /b 2",
+        "  %PY_CMD% -m pip install pynput",
+        "  if errorlevel 1 (",
+        "    echo [ERROR] Package install failed.",
+        "    pause",
+        "    exit /b 3",
+        "  )",
+        ")",
+        "echo.",
+        "echo [RUN] Starting macro. F1 start ^| F2 stop ^| Numpad 5 exit",
+        "echo ---------------------------------------------------------------",
+        "%PY_CMD% \"%~dp0" + script_path.name + "\"",
+        "set EXIT_CODE=%ERRORLEVEL%",
+        "echo ---------------------------------------------------------------",
+        "echo Script exited with code %EXIT_CODE%.",
+        "if not \"%EXIT_CODE%\"==\"0\" pause",
+        "exit /b %EXIT_CODE%",
+        "",
+    ])
 
 
 def event_line(event):
@@ -3369,6 +3438,10 @@ class CodeHubApp:
             path = export_dir / f"{safe_name(rec['name'])}.py"
         with open(path, "w", encoding="utf-8") as f:
             f.write(code)
+        if path.suffix.lower() == ".py":
+            launcher_path = path.with_suffix(".cmd")
+            launcher_path.write_text(generate_python_launcher(path), encoding="utf-8", newline="\r\n")
+            rec["python_launcher_path"] = str(launcher_path)
         rec["export_path"] = str(path)
         rec["export_missing"] = False
         write_json(RECORDINGS_PATH, self.recordings)
@@ -3378,7 +3451,10 @@ class CodeHubApp:
         self.editor_path.set(str(path))
         self.tabs.select(1)
         self.refresh_files()
-        messagebox.showinfo(APP_NAME, f"Exported:\n{path}")
+        if path.suffix.lower() == ".py":
+            messagebox.showinfo(APP_NAME, f"Exported:\n{path}\n\nPython launcher:\n{path.with_suffix('.cmd')}")
+        else:
+            messagebox.showinfo(APP_NAME, f"Exported:\n{path}")
 
     def delete_recording(self):
         idx, rec = self.selected_recording()
@@ -3445,14 +3521,17 @@ class CodeHubApp:
             self.file_tree.delete(row)
         export_dir = resolve_app_path(self.export_dir_var.get()) if hasattr(self, "export_dir_var") else EXPORT_DIR
         export_dir.mkdir(parents=True, exist_ok=True)
-        files = sorted([p for p in export_dir.iterdir() if p.is_file() and p.suffix.lower() in {".py",".ahk",".txt"}])
+        files = sorted([p for p in export_dir.iterdir() if p.is_file() and p.suffix.lower() in {".py",".ahk",".cmd",".txt"}])
+        for p in files:
+            if p.suffix.lower() == ".ahk":
+                self.repair_generated_ahk_v1_loader(p, quiet=True)
         self._last_file_snapshot = {f"{p}|{p.stat().st_mtime}|{p.stat().st_size}" for p in files}
         for p in files:
             self.file_tree.insert("", END, iid=str(p), values=(p.name, format_size(p.stat().st_size)))
         if old_focus and self.file_tree.exists(old_focus):
             self.file_tree.focus(old_focus)
             self.file_tree.selection_set(old_sel or (old_focus,))
-        if self.sync_recording_exports(files):
+        if self.sync_recording_exports([p for p in files if p.suffix.lower() in {".py", ".ahk"}]):
             self.refresh_recordings()
         self.refresh_ai_targets()
 
@@ -3535,7 +3614,7 @@ class CodeHubApp:
         snapshot = {
             f"{p}|{p.stat().st_mtime}|{p.stat().st_size}"
             for p in export_dir.iterdir()
-            if p.is_file() and p.suffix.lower() in {".py",".ahk",".txt"}
+            if p.is_file() and p.suffix.lower() in {".py",".ahk",".cmd",".txt"}
         }
         if snapshot != self._last_file_snapshot:
             self._last_file_snapshot = snapshot
@@ -4082,11 +4161,7 @@ class CodeHubApp:
                     return
                 if not self.ensure_python_script_requirements(path, py_for_packages):
                     return
-                py = pythonw_command() or py_for_packages
-                proc = subprocess.Popen(
-                    py + [str(path)], cwd=str(path.parent),
-                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    creationflags=hidden_process_flags())
+                proc = self.launch_python_script_console(path, py_for_packages)
             elif path.suffix.lower() == ".ahk":
                 self.repair_generated_ahk_v1_loader(path)
                 version = ahk_required_version_for_file(path, self.ahk_version.get() or "2")
@@ -4098,6 +4173,11 @@ class CodeHubApp:
                     [ahk, str(path)], cwd=str(path.parent),
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     creationflags=hidden_process_flags())
+            elif path.suffix.lower() in {".cmd", ".bat"}:
+                proc = subprocess.Popen(
+                    ["cmd.exe", "/c", str(path)],
+                    cwd=str(path.parent),
+                    creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0)
             else:
                 proc = subprocess.Popen(
                     ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
@@ -4109,7 +4189,71 @@ class CodeHubApp:
         except Exception as e:
             messagebox.showerror(APP_NAME, f"Could not run script:\n{e}")
 
-    def repair_generated_ahk_v1_loader(self, path):
+    def launch_python_script_console(self, path, py_cmd):
+        runner_dir = DATA_DIR / "script_runners"
+        runner_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        runner = runner_dir / f"run_{safe_name(path.stem)}_{stamp}.cmd"
+        py_line = command_to_cmdline(py_cmd)
+        script_line = subprocess.list2cmdline([str(path)])
+        runner.write_text(
+            "\n".join([
+                "@echo off",
+                "setlocal",
+                f"title CodeHub Script Runner - {path.name}",
+                "color 0A",
+                "echo ================================================================",
+                "echo                    CodeHub Script Runner",
+                "echo ================================================================",
+                f"echo Script : {path}",
+                f"echo Folder : {path.parent}",
+                f"echo Python : {py_line}",
+                "echo.",
+                "echo [1/3] Checking Python...",
+                f"{py_line} --version",
+                "if errorlevel 1 (",
+                "  echo.",
+                "  echo [ERROR] Python could not start on this PC.",
+                "  echo Install Python 3 from https://www.python.org/downloads/windows/",
+                "  pause",
+                "  exit /b 9009",
+                ")",
+                "echo.",
+                "echo [2/3] Checking CodeHub macro package...",
+                f"{py_line} -c \"import pynput; print('pynput OK')\"",
+                "if errorlevel 1 (",
+                "  echo.",
+                "  echo [ERROR] Missing package: pynput",
+                f"  echo Run: {py_line} -m pip install pynput",
+                "  echo Or run this script from CodeHub again and accept the install popup.",
+                "  pause",
+                "  exit /b 2",
+                ")",
+                "echo.",
+                "echo [3/3] Launching script...",
+                "echo F1 start ^| F2 stop ^| Numpad 5 exit",
+                "echo ---------------------------------------------------------------",
+                f"{py_line} {script_line}",
+                "set CODEHUB_SCRIPT_EXIT=%ERRORLEVEL%",
+                "echo ---------------------------------------------------------------",
+                "echo Script exited with code %CODEHUB_SCRIPT_EXIT%.",
+                "if not \"%CODEHUB_SCRIPT_EXIT%\"==\"0\" (",
+                "  echo.",
+                "  echo The script crashed or Python rejected it. The error should be above.",
+                "  pause",
+                ")",
+                "exit /b %CODEHUB_SCRIPT_EXIT%",
+            ]),
+            encoding="utf-8",
+            newline="\r\n",
+        )
+        return subprocess.Popen(
+            ["cmd.exe", "/c", str(runner)],
+            cwd=str(path.parent),
+            creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
+        )
+
+    def repair_generated_ahk_v1_loader(self, path, quiet=False):
         try:
             text = Path(path).read_text(encoding="utf-8", errors="replace")
         except Exception:
@@ -4118,8 +4262,24 @@ class CodeHubApp:
             return
         original = text
         text = text.replace(
-            'ShowCodeHubLoader(durationMs := 900, title := "Loading macro")\n{\n    Gui, Loader:New',
-            'ShowCodeHubLoader(durationMs := 900, title := "Loading macro")\n{\n    global LoaderStatus, LoaderBar\n    Gui, Loader:New',
+            "    global LoaderStatus, LoaderBar\n",
+            "",
+        )
+        text = text.replace(
+            "Gui, Loader:Add, Text, vLoaderStatus w300 Center y+6, CodeHub AutoHotkey v1 loader",
+            "Gui, Loader:Add, Text, HwndLoaderStatusHwnd w300 Center y+6, CodeHub AutoHotkey v1 loader",
+        )
+        text = text.replace(
+            "Gui, Loader:Add, Progress, vLoaderBar w300 h10 y+10 Background182434 c33FF66 Range0-100, 0",
+            "Gui, Loader:Add, Progress, HwndLoaderBarHwnd w300 h10 y+10 Background182434 c33FF66 Range0-100, 0",
+        )
+        text = text.replace(
+            "GuiControl, Loader:, LoaderBar, %val%",
+            "GuiControl,, %LoaderBarHwnd%, %val%",
+        )
+        text = text.replace(
+            "GuiControl, Loader:, LoaderStatus, Indexing input timing... %val%`%",
+            "GuiControl,, %LoaderStatusHwnd%, Indexing input timing... %val%`%",
         )
         text = text.replace(
             "Gui, WM:New, +AlwaysOnTop -Caption +ToolWindow +E0x20\n",
@@ -4138,9 +4298,11 @@ class CodeHubApp:
                 self.editor.delete("1.0", END)
                 self.editor.insert(END, text)
                 self.editor_dirty = False
-            self.status.set(f"Repaired AHK v1 loader in {Path(path).name}")
+            if not quiet:
+                self.status.set(f"Repaired AHK v1 loader in {Path(path).name}")
         except Exception as e:
-            messagebox.showwarning(APP_NAME, f"CodeHub found an old AHK v1 loader bug but could not repair it:\n{e}", parent=self.root)
+            if not quiet:
+                messagebox.showwarning(APP_NAME, f"CodeHub found an old AHK v1 loader bug but could not repair it:\n{e}", parent=self.root)
 
     def ensure_python_script_requirements(self, path, py_cmd):
         requirements = required_packages_for_python_script(path)
@@ -4195,7 +4357,26 @@ class CodeHubApp:
         self.macro_process = proc
         self.macro_lock_kind = "process"
         self.show_lock_overlay(label)
-        self.root.after(700, self.poll_macro_process)
+        self.root.after(450, lambda: self.warn_if_macro_exited_immediately(proc, label))
+        self.root.after(900, self.poll_macro_process)
+
+    def warn_if_macro_exited_immediately(self, proc, label):
+        if self.macro_process is not proc:
+            return
+        try:
+            code = proc.poll()
+        except Exception:
+            return
+        if code is None:
+            return
+        self.status.set(f"{label} exited immediately ({code})")
+        messagebox.showwarning(
+            APP_NAME,
+            f"{label} closed immediately.\n\n"
+            "That usually means Python/AutoHotkey rejected the script or a dependency is missing.\n\n"
+            "For Python scripts, CodeHub now opens a Script Runner command prompt with the real error/logs.",
+            parent=self.root,
+        )
 
     def lock_for_external_macro(self, pids, paths):
         if self.macro_locked:
@@ -4446,7 +4627,7 @@ class CodeHubApp:
             return
         path = filedialog.askopenfilename(
             initialdir=str(resolve_app_path(self.export_dir_var.get())),
-            filetypes=[("Scripts", "*.py *.ahk *.txt"), ("All files", "*.*")])
+            filetypes=[("Scripts", "*.py *.ahk *.cmd *.txt"), ("All files", "*.*")])
         if not path:
             return
         self.load_script(Path(path))
@@ -4508,7 +4689,7 @@ class CodeHubApp:
             path = filedialog.asksaveasfilename(
                 initialdir=str(resolve_app_path(self.export_dir_var.get())),
                 defaultextension=".py",
-                filetypes=[("Scripts", "*.py *.ahk *.txt"), ("All files", "*.*")])
+                filetypes=[("Scripts", "*.py *.ahk *.cmd *.txt"), ("All files", "*.*")])
             if not path:
                 return False
 
@@ -4876,7 +5057,7 @@ root.mainloop()
             return
         export_dir = resolve_app_path(self.export_dir_var.get()) if hasattr(self, "export_dir_var") else EXPORT_DIR
         export_dir.mkdir(parents=True, exist_ok=True)
-        values = [str(p) for p in sorted(export_dir.iterdir()) if p.is_file() and p.suffix.lower() in {".py", ".ahk", ".txt"}]
+        values = [str(p) for p in sorted(export_dir.iterdir()) if p.is_file() and p.suffix.lower() in {".py", ".ahk", ".cmd", ".txt"}]
         self.builder_target_combo.configure(values=values)
         if self.builder_target_var.get() not in values and values:
             self.builder_target_var.set(values[0])
@@ -5580,7 +5761,10 @@ root.mainloop()
         request = urllib.request.Request(GITHUB_API_LATEST, headers={"User-Agent": "CodeHub-Updater"})
         with urllib.request.urlopen(request, timeout=12) as response:
             payload = json.loads(response.read().decode("utf-8"))
-        return str(payload.get("sha", "")).strip()
+        sha = str(payload.get("sha", "")).strip()
+        if not sha:
+            raise RuntimeError("GitHub did not return a commit SHA.")
+        return sha
 
     def latest_github_release(self):
         request = urllib.request.Request(GITHUB_API_LATEST_RELEASE, headers={"User-Agent": "CodeHub-Updater"})
@@ -5597,14 +5781,19 @@ root.mainloop()
         return tag, asset_url
 
     def check_for_updates(self, auto=False):
-        self.status.set("Checking GitHub releases for updates...")
+        self.status.set("Checking GitHub commit for updates...")
 
         def worker():
             try:
-                latest_tag, asset_url = self.latest_github_release()
-                current_tag = str(self.settings.get("last_update_tag", "") or build_version(BUILD_NUMBER))
-                has_update = latest_tag != current_tag
-                self.root.after(0, lambda: self.finish_update_check(latest_tag, has_update, auto, asset_url))
+                latest_sha = self.latest_github_sha()
+                try:
+                    latest_tag, _release_asset_url = self.latest_github_release()
+                except Exception:
+                    latest_tag = build_version(BUILD_NUMBER)
+                asset_url = GITHUB_MAIN_EXE_URL
+                current_sha = current_update_sha() or str(self.settings.get("last_update_sha", "") or "").strip()
+                has_update = bool(latest_sha and latest_sha != current_sha)
+                self.root.after(0, lambda: self.finish_update_check(latest_sha, has_update, auto, asset_url, latest_tag))
             except Exception as exc:
                 if not auto:
                     self.root.after(0, lambda: messagebox.showerror(APP_NAME, f"Update check failed:\n{exc}"))
@@ -5612,25 +5801,35 @@ root.mainloop()
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def finish_update_check(self, latest_tag, has_update, auto, asset_url=None):
+    def finish_update_check(self, latest_sha, has_update, auto, asset_url=None, latest_tag=None):
+        short_sha = str(latest_sha or "")[:7]
+        version_label = str(latest_tag or build_version(BUILD_NUMBER))
         if not has_update:
-            self.status.set(f"Already up to date    {latest_tag}")
+            self.status.set(f"Already up to date    {version_label}    {short_sha}")
             if not auto:
-                messagebox.showinfo(APP_NAME, f"CodeHub is already up to date.\nLatest release: {latest_tag}")
+                messagebox.showinfo(
+                    APP_NAME,
+                    "CodeHub is already up to date.\n\n"
+                    f"Version: {version_label}\n"
+                    f"Commit: {short_sha}",
+                )
             return
         if auto:
             should_update = True
         else:
             should_update = messagebox.askyesno(
                 APP_NAME,
-                f"Update found on GitHub: {latest_tag}\n\nDownload the latest CodeHub.exe now?",
+                "Update found on GitHub.\n\n"
+                f"Version label: {version_label}\n"
+                f"Latest commit: {short_sha}\n\n"
+                "Download the latest CodeHub.exe now?",
             )
         if should_update:
-            self.download_and_apply_update(latest_tag, asset_url or GITHUB_EXE_URL)
+            self.download_and_apply_update(latest_sha, asset_url or GITHUB_EXE_URL, latest_tag=version_label)
         else:
-            self.status.set(f"Update available    {latest_tag}")
+            self.status.set(f"Update available    {version_label}    {short_sha}")
 
-    def download_and_apply_update(self, latest_tag, asset_url=None):
+    def download_and_apply_update(self, latest_sha, asset_url=None, latest_tag=None):
         if not getattr(sys, "frozen", False):
             messagebox.showinfo(APP_NAME, "Source mode detected. Use Run Local Updater to rebuild the exe.")
             return
@@ -5642,7 +5841,9 @@ root.mainloop()
         current_pid = os.getpid()
 
         asset_url = asset_url or GITHUB_EXE_URL
-        self.settings["last_update_tag"] = latest_tag
+        self.settings["last_update_sha"] = str(latest_sha or "").strip()
+        if latest_tag:
+            self.settings["last_update_tag"] = str(latest_tag)
         write_json(SETTINGS_PATH, self.settings)
 
         script = textwrap.dedent(f"""\
@@ -6133,7 +6334,7 @@ Replay is useful when fine-tuning a macro that almost works but needs small timi
 <h2>Updates</h2>
 
 <p>
-CodeHub supports built-in update checking through the official GitHub repository. When a newer version becomes available, CodeHub can download the latest release and restart into the updated version without requiring a complete reinstall.
+CodeHub supports built-in update checking through the official GitHub repository. Updates are detected from the latest main-branch commit, while releases remain the public version labels. When a newer commit is available, CodeHub can download the main-branch CodeHub.exe and restart into the updated build without requiring a complete reinstall.
 </p>
 
 <p>
