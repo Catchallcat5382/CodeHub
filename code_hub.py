@@ -12,6 +12,7 @@ import tempfile
 import textwrap
 import urllib.request
 import webbrowser
+import ssl
 from datetime import datetime
 from pathlib import Path
 from tkinter import (
@@ -64,7 +65,7 @@ GITHUB_API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_REPO}/release
 GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest/download/CodeHub.exe"
 GITHUB_MAIN_EXE_URL = f"https://github.com/{GITHUB_REPO}/raw/main/CodeHub.exe"
 BUILD_COMMIT = "local-build"
-BUILD_NUMBER = 30
+BUILD_NUMBER = 1
 MAX_REPLAY_FPS = 240
 REPLAY_FPS_CHOICES = ["15", "20", "24", "30", "60", "120", "144", "240"]
 
@@ -492,6 +493,52 @@ def python_install_url():
 
 def hidden_process_flags():
     return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
+
+def github_json_request(url, timeout=15):
+    request = urllib.request.Request(url, headers={"User-Agent": "CodeHub-Updater"})
+    errors = []
+
+    context = None
+    try:
+        import certifi
+        context = ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        context = None
+
+    try:
+        kwargs = {"timeout": timeout}
+        if context is not None:
+            kwargs["context"] = context
+        with urllib.request.urlopen(request, **kwargs) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        errors.append(f"Python HTTPS: {exc}")
+
+    if os.name == "nt":
+        ps_url = str(url).replace("'", "''")
+        ps_cmd = (
+            "$ErrorActionPreference='Stop'; "
+            "$ProgressPreference='SilentlyContinue'; "
+            "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; "
+            f"$r=Invoke-RestMethod -Uri '{ps_url}' -Headers @{{'User-Agent'='CodeHub-Updater'}} -TimeoutSec {int(timeout)}; "
+            "$r | ConvertTo-Json -Depth 30 -Compress"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+                capture_output=True,
+                text=True,
+                timeout=timeout + 8,
+                creationflags=hidden_process_flags(),
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return json.loads(result.stdout)
+            errors.append(f"PowerShell HTTPS: {(result.stderr or result.stdout or '').strip()}")
+        except Exception as exc:
+            errors.append(f"PowerShell HTTPS: {exc}")
+
+    raise RuntimeError("Could not reach GitHub for updates.\n\n" + "\n".join(errors[-3:]))
 
 
 def first_asset_named(stem):
@@ -1186,7 +1233,7 @@ if __name__ == "__main__":
 
 def generate_python_launcher(script_path):
     script_path = Path(script_path)
-    fallback_packages = "pynput mss Pillow pytesseract opencv-python numpy pygame sounddevice soundcard"
+    fallback_packages = "pynput mss Pillow pytesseract opencv-python numpy pygame sounddevice soundcard certifi"
     return "\n".join([
         "@echo off",
         "setlocal EnableExtensions",
@@ -4240,7 +4287,7 @@ class CodeHubApp:
         py_line = command_to_cmdline(py_cmd)
         script_line = subprocess.list2cmdline([str(path)])
         req_path = APP_ROOT / "requirements.txt"
-        fallback_packages = "pynput mss Pillow pytesseract opencv-python numpy pygame sounddevice soundcard"
+        fallback_packages = "pynput mss Pillow pytesseract opencv-python numpy pygame sounddevice soundcard certifi"
         runner.write_text(
             "\n".join([
                 "@echo off",
@@ -5805,18 +5852,14 @@ root.mainloop()
         self.status.set("Settings saved")
 
     def latest_github_sha(self):
-        request = urllib.request.Request(GITHUB_API_LATEST, headers={"User-Agent": "CodeHub-Updater"})
-        with urllib.request.urlopen(request, timeout=12) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        payload = github_json_request(GITHUB_API_LATEST, timeout=15)
         sha = str(payload.get("sha", "")).strip()
         if not sha:
             raise RuntimeError("GitHub did not return a commit SHA.")
         return sha
 
     def latest_github_release(self):
-        request = urllib.request.Request(GITHUB_API_LATEST_RELEASE, headers={"User-Agent": "CodeHub-Updater"})
-        with urllib.request.urlopen(request, timeout=12) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        payload = github_json_request(GITHUB_API_LATEST_RELEASE, timeout=15)
         tag = str(payload.get("tag_name", "")).strip()
         asset_url = GITHUB_EXE_URL
         for asset in payload.get("assets", []) or []:
@@ -5854,12 +5897,15 @@ root.mainloop()
         if not has_update:
             self.status.set(f"Already up to date    {version_label}    {short_sha}")
             if not auto:
-                messagebox.showinfo(
+                reinstall = messagebox.askyesno(
                     APP_NAME,
                     "CodeHub is already up to date.\n\n"
                     f"Version: {version_label}\n"
-                    f"Commit: {short_sha}",
+                    f"Commit: {short_sha}\n\n"
+                    "Reinstall/reapply the latest build anyway?",
                 )
+                if reinstall:
+                    self.download_and_apply_update(latest_sha, asset_url or GITHUB_MAIN_EXE_URL, latest_tag=version_label)
             return
         if auto:
             should_update = True
@@ -5897,13 +5943,22 @@ root.mainloop()
         ps_script = textwrap.dedent(f"""\
     $ErrorActionPreference = 'Stop'
     $Host.UI.RawUI.WindowTitle = 'CodeHub Update'
+    $logFile = Join-Path "{app_dir}" "CodeHub_update_log.txt"
+    try {{ Start-Transcript -Path $logFile -Append | Out-Null }} catch {{ }}
     function Say($m) {{ Write-Host "[CodeHub] $m" -ForegroundColor Green }}
-    function Fail($m) {{ Write-Host "[CodeHub] ERROR: $m" -ForegroundColor Red; Read-Host 'Press Enter to close'; exit 1 }}
+    function Fail($m) {{ Write-Host "[CodeHub] ERROR: $m" -ForegroundColor Red; Write-Host "[CodeHub] Log: $logFile" -ForegroundColor Yellow; try {{ Stop-Transcript | Out-Null }} catch {{ }}; Read-Host 'Press Enter to close'; exit 1 }}
 
     Set-Location -LiteralPath "{app_dir}"
     Say "downloading latest commit build..."
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri "{asset_url}" -OutFile "{tmp_exe}" -UseBasicParsing
+    try {{
+        Invoke-WebRequest -Uri "{asset_url}" -OutFile "{tmp_exe}" -UseBasicParsing -Headers @{{'User-Agent'='CodeHub-Updater'}}
+    }} catch {{
+        Say "PowerShell download failed: $($_.Exception.Message)"
+        Say "trying curl.exe fallback..."
+        & curl.exe -L --fail -A "CodeHub-Updater" -o "{tmp_exe}" "{asset_url}"
+        if ($LASTEXITCODE -ne 0) {{ Fail "curl.exe download failed with code $LASTEXITCODE" }}
+    }}
     if (!(Test-Path -LiteralPath "{tmp_exe}")) {{ Fail "download did not create a file" }}
     $size = (Get-Item -LiteralPath "{tmp_exe}").Length
     if ($size -lt 1048576) {{ Fail "downloaded file is too small ($size bytes), refusing to replace the app" }}
@@ -5928,23 +5983,6 @@ root.mainloop()
     }}
     if (!$copied) {{ Fail "could not replace CodeHub.exe" }}
 
-    Say "saving installed commit marker..."
-    $settingsFile = "{settings_path}"
-    try {{
-        $dir = Split-Path -Parent $settingsFile
-        if (!(Test-Path -LiteralPath $dir)) {{ New-Item -ItemType Directory -Path $dir -Force | Out-Null }}
-        if (Test-Path -LiteralPath $settingsFile) {{
-            $json = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
-        }} else {{
-            $json = [pscustomobject]@{{}}
-        }}
-        $json | Add-Member -NotePropertyName last_update_sha -NotePropertyValue "{latest_sha}" -Force
-        $json | Add-Member -NotePropertyName last_update_tag -NotePropertyValue "{latest_tag}" -Force
-        $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settingsFile -Encoding UTF8
-    }} catch {{
-        Say "could not save settings marker, but the exe was replaced"
-    }}
-
     Say "creating desktop shortcut..."
     try {{
         $desktop = [Environment]::GetFolderPath('Desktop')
@@ -5960,9 +5998,29 @@ root.mainloop()
     }}
 
     Say "restarting CodeHub..."
-    Start-Process -FilePath "{exe_path}" -WorkingDirectory "{app_dir}"
+    $newProc = Start-Process -FilePath "{exe_path}" -WorkingDirectory "{app_dir}" -PassThru
+    Start-Sleep -Seconds 2
+    if ($newProc.HasExited) {{ Fail "CodeHub relaunched but immediately exited with code $($newProc.ExitCode)" }}
+    Say "relaunch verified with PID $($newProc.Id)"
+    Say "saving installed commit marker..."
+    $settingsFile = "{settings_path}"
+    try {{
+        $dir = Split-Path -Parent $settingsFile
+        if (!(Test-Path -LiteralPath $dir)) {{ New-Item -ItemType Directory -Path $dir -Force | Out-Null }}
+        if (Test-Path -LiteralPath $settingsFile) {{
+            $json = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+        }} else {{
+            $json = [pscustomobject]@{{}}
+        }}
+        $json | Add-Member -NotePropertyName last_update_sha -NotePropertyValue "{latest_sha}" -Force
+        $json | Add-Member -NotePropertyName last_update_tag -NotePropertyValue "{latest_tag}" -Force
+        $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settingsFile -Encoding UTF8
+    }} catch {{
+        Say "could not save settings marker, but the exe was replaced and relaunched"
+    }}
     Remove-Item -LiteralPath "{tmp_exe}" -Force -ErrorAction SilentlyContinue
     Say "updated successfully, closing updater..."
+    try {{ Stop-Transcript | Out-Null }} catch {{ }}
     Start-Sleep -Seconds 1
     exit 0
     """)
@@ -5975,6 +6033,13 @@ root.mainloop()
     title CodeHub Update
     cd /d "{app_dir}"
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{ps1_path}"
+    if errorlevel 1 (
+        echo.
+        echo [CodeHub] updater failed. The error is above.
+        pause
+        exit /b 1
+    )
+    exit /b 0
     """)
 
         cmd_path.write_text(script, encoding="utf-8")
@@ -5998,8 +6063,8 @@ root.mainloop()
         else:
             subprocess.Popen(["sh", str(cmd_path)], cwd=str(app_dir))
 
-        self.status.set("Updater console opened. CodeHub will close in a moment...")
-        self.root.after(1200, self.close)
+        self.status.set("Updater console opened. CodeHub will force-close in a moment...")
+        self.root.after(700, self.force_close_for_update)
 
     def run_local_updater(self):
         candidates = [
@@ -6015,7 +6080,15 @@ root.mainloop()
 
         app_dir = updater.parent
         current_exe = Path(sys.executable).resolve()
-        exe_path = current_exe if getattr(sys, "frozen", False) and current_exe.exists() else app_dir / "CodeHub.exe"
+        exe_candidates = []
+        if getattr(sys, "frozen", False) and current_exe.exists():
+            exe_candidates.append(current_exe)
+        exe_candidates.extend([
+            Path(r"F:\Auto Hotkey\Python\Apps\CodeHub.exe"),
+            app_dir.parent / "Apps" / "CodeHub.exe",
+            app_dir / "CodeHub.exe",
+        ])
+        exe_path = next((path for path in exe_candidates if path.exists()), exe_candidates[0])
         restart_dir = exe_path.parent
         cmd_path = app_dir / "CodeHub_local_update.cmd"
         current_pid = os.getpid()
@@ -6026,6 +6099,9 @@ root.mainloop()
     color 0A
     title CodeHub Local Updater
     cd /d "{app_dir}"
+    set "CODEHUB_UPDATE_LOG={app_dir}\\CodeHub_update_log.txt"
+    echo ================================================================>>"%CODEHUB_UPDATE_LOG%"
+    echo CodeHub local update started %date% %time%>>"%CODEHUB_UPDATE_LOG%"
 
     echo [CodeHub] waiting for app to close...
     :WAIT_APP
@@ -6036,9 +6112,10 @@ root.mainloop()
     )
 
     echo [CodeHub] running local updater...
-    call "{updater}"
+    call "{updater}" >>"%CODEHUB_UPDATE_LOG%" 2>&1
     if errorlevel 1 (
         echo [CodeHub] local update failed.
+        echo [CodeHub] log: %CODEHUB_UPDATE_LOG%
         pause
         exit /b 1
     )
@@ -6047,7 +6124,12 @@ root.mainloop()
     if exist "{exe_path}" (
         echo [CodeHub] making sure desktop shortcut exists...
         powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$desktop=[Environment]::GetFolderPath('Desktop'); $lnk=Join-Path $desktop 'CodeHub.lnk'; $shell=New-Object -ComObject WScript.Shell; $s=$shell.CreateShortcut($lnk); $s.TargetPath='{exe_path}'; $s.WorkingDirectory='{restart_dir}'; $s.IconLocation='{exe_path},0'; $s.Save()"
-        start "" /D "{restart_dir}" "{exe_path.name}"
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p=Start-Process -FilePath '{exe_path}' -WorkingDirectory '{restart_dir}' -PassThru; Start-Sleep -Seconds 2; if ($p.HasExited) {{ Write-Host '[CodeHub] relaunched but immediately exited.' -ForegroundColor Red; exit 1 }} else {{ Write-Host '[CodeHub] relaunch verified.' -ForegroundColor Green }}"
+        if errorlevel 1 (
+            echo [CodeHub] relaunch failed.
+            pause
+            exit /b 1
+        )
     ) else (
         echo [CodeHub] CodeHub.exe not found after update.
         pause
@@ -6056,7 +6138,7 @@ root.mainloop()
 
     echo [CodeHub] updated and closing...
     timeout /t 1 /nobreak >nul
-    exit
+    exit /b 0
     """)
 
         cmd_path.write_text(script, encoding="utf-8")
@@ -6080,8 +6162,8 @@ root.mainloop()
         else:
             subprocess.Popen(["sh", str(cmd_path)], cwd=str(app_dir))
 
-        self.status.set("Local updater console opened. CodeHub will close in a moment...")
-        self.root.after(1200, self.close)
+        self.status.set("Local updater console opened. CodeHub will force-close in a moment...")
+        self.root.after(700, self.force_close_for_update)
 
     def start_tutorial(self):
         self.tutorial_steps = [
@@ -6769,6 +6851,34 @@ CodeHub • Built by Catchallcat5382
             self.hotkey_listener.stop()
         self.root.destroy()
 
+    def force_close_for_update(self):
+        try:
+            self.editor_dirty = False
+            self.is_recording = False
+            try:
+                self.recorder.stop()
+            except Exception:
+                pass
+            try:
+                self.stop_replay_video_capture()
+            except Exception:
+                pass
+            try:
+                self.stop_position_logging()
+            except Exception:
+                pass
+            if hasattr(self, "hotkey_listener"):
+                try:
+                    self.hotkey_listener.stop()
+                except Exception:
+                    pass
+            self.root.destroy()
+        except Exception:
+            try:
+                os._exit(0)
+            except Exception:
+                pass
+
     def run(self):
         self.root.mainloop()
 
@@ -6776,4 +6886,3 @@ CodeHub • Built by Catchallcat5382
 if __name__ == "__main__":
     startup_console()
     CodeHubApp().run()
-
