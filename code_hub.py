@@ -61,9 +61,9 @@ GITHUB_REPO = "Catchallcat5382/CodeHub"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
 GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/raw/main/CodeHub.exe"
 BUILD_COMMIT = "local-build"
-BUILD_NUMBER = 20
-MAX_REPLAY_FPS = 30
-REPLAY_FPS_CHOICES = ["15", "20", "24", "30"]
+BUILD_NUMBER = 21
+MAX_REPLAY_FPS = 240
+REPLAY_FPS_CHOICES = ["15", "20", "24", "30", "60", "120", "144", "240"]
 
 
 def build_version(build_number=None):
@@ -134,10 +134,18 @@ DEFAULT_SETTINGS = {
     "custom_panel": "#0b0b0b",
     "custom_text": "#e8f0f8",
     "custom_accent": "#57a6ff",
+    "ui_sounds_enabled": True,
+    "click_sounds_enabled": True,
+    "tab_sounds_enabled": True,
+    "loading_sound_enabled": True,
+    "show_data_paths": False,
     "record_screenshots": True,
-    "review_capture_fps": 10,
-    "review_capture_interval_ms": 100,
+    "review_capture_fps": 60,
+    "review_capture_interval_ms": 1000 // 60,
     "record_replay_video": False,
+    "record_replay_audio": False,
+    "replay_audio_device": "Default",
+    "allow_headset_mic_audio": False,
     "builder_background_image": "",
     "auto_update": False,
     "last_update_sha": "",
@@ -296,9 +304,16 @@ def clear():
 
 
 def hide_console_if_present():
-    # Keep the loader/diagnostic console open on purpose.
-    # User requested visible asset errors for sounds/cursor.
-    return
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)
+        ctypes.windll.kernel32.FreeConsole()
+    except Exception:
+        pass
 
 
 def startup_console():
@@ -422,6 +437,18 @@ def pythonw_command():
 
 def hidden_process_flags():
     return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
+
+def first_asset_named(stem):
+    preferred = (".mp3", ".wav", ".ogg", ".flac", ".aiff")
+    for suffix in preferred:
+        path = ASSET_DIR / f"{stem}{suffix}"
+        if path.is_file():
+            return path
+    for path in sorted(ASSET_DIR.glob(f"{stem}.*")):
+        if path.is_file():
+            return path
+    return None
 
 
 def _ahk_version_from_output(output):
@@ -890,6 +917,9 @@ def hide_console_if_present():
         return
     try:
         import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)
         ctypes.windll.kernel32.FreeConsole()
     except Exception:
         pass
@@ -1229,13 +1259,13 @@ class TitleBar(Frame):
         # Window controls (right side)
         Frame(self, bg=C["panel"], width=10).pack(side=RIGHT)
 
-        close_btn = self._wbtn("✕", C["red"], self.app.close)
+        close_btn = self._wbtn("X", C["red"], self.app.close)
         close_btn.pack(side=RIGHT, padx=2, pady=10)
 
-        max_btn = self._wbtn("□", C["green"], self._toggle_max)
+        max_btn = self._wbtn("[ ]", C["green"], self._toggle_max)
         max_btn.pack(side=RIGHT, padx=2, pady=10)
 
-        min_btn = self._wbtn("—", C["yellow"], self.app.minimize_window)
+        min_btn = self._wbtn("_", C["yellow"], self.app.minimize_window)
         min_btn.pack(side=RIGHT, padx=2, pady=10)
 
         Frame(self, bg=C["panel"], width=10).pack(side=RIGHT)
@@ -1372,6 +1402,14 @@ class CodeHubApp:
         self.custom_accent = StringVar(value=self.settings.get("custom_accent", "#57A6FF"))
         self.record_screenshots = BooleanVar(value=bool(self.settings.get("record_screenshots", True)))
         self.record_replay_video = BooleanVar(value=bool(self.settings.get("record_replay_video", False)))
+        self.record_replay_audio = BooleanVar(value=bool(self.settings.get("record_replay_audio", False)))
+        self.replay_audio_device = StringVar(value=self.settings.get("replay_audio_device", "Default"))
+        self.allow_headset_mic_audio = BooleanVar(value=bool(self.settings.get("allow_headset_mic_audio", False)))
+        self.ui_sounds_enabled = BooleanVar(value=bool(self.settings.get("ui_sounds_enabled", True)))
+        self.click_sounds_enabled = BooleanVar(value=bool(self.settings.get("click_sounds_enabled", self.settings.get("ui_sounds_enabled", True))))
+        self.tab_sounds_enabled = BooleanVar(value=bool(self.settings.get("tab_sounds_enabled", self.settings.get("ui_sounds_enabled", True))))
+        self.loading_sound_enabled = BooleanVar(value=bool(self.settings.get("loading_sound_enabled", True)))
+        self.show_data_paths = BooleanVar(value=bool(self.settings.get("show_data_paths", False)))
         self.builder_background_image = StringVar(value=str(self.settings.get("builder_background_image", "")))
         self.builder_background_photo = None
         self.builder_selected_index = None
@@ -1396,14 +1434,30 @@ class CodeHubApp:
         self.review_shot_paths = []
         self.review_shot_index = 0
         self.review_photo = None
+        self.review_photo_cache = {}
         self.review_playing = False
         self.review_paused = False
         self.review_play_index = 0
         self.review_speed = DoubleVar(value=1.0)
         self.review_video_path = None
+        self.review_audio_path = None
+        self.review_video_meta = {}
+        self.review_video_playing = False
+        self.review_video_paused = False
+        self.review_video_thread = None
+        self.review_audio_channel = None
         self.replay_video_thread = None
         self.replay_video_stop_event = None
+        self.replay_audio_thread = None
+        self.replay_audio_stop_event = None
         self.replay_video_start_time = None
+        self._audio_devices_cache = []
+        self._sound_ready = False
+        self._sound_cache = {}
+        self._sound_channels = {}
+        self.custom_cursor_enabled = False
+        self.cursor_window = None
+        self._last_cursor_xy = None
         self._capture_busy = False
         self.ai_pending_path = None
         self.ai_pending_text = ""
@@ -1426,7 +1480,9 @@ class CodeHubApp:
         write_json(SETTINGS_PATH, self.settings)
 
         self._configure_styles()
+        self.init_sound_system()
         self._build()
+        self.bind_ui_sounds()
         self.start_hotkeys()
         self.start_auto_refresh()
         self.root.bind("<Map>", self.restore_borderless_after_minimize)
@@ -1450,37 +1506,48 @@ class CodeHubApp:
             pass
 
         sound_duration = 4.0
+        load_started = False
+        if self.loading_sound_enabled.get():
+            self.play_ui_sound("load", force=True, max_ms=int(sound_duration * 1000))
+            load_started = bool(self._sound_channels.get("load"))
 
         intro = Toplevel(self.root)
         intro.overrideredirect(True)
         intro.attributes("-topmost", True)
-        intro.configure(bg="#020607")
+        intro.configure(bg="#050006")
 
-        w, h = 760, 440
+        w, h = 780, 440
         sw = intro.winfo_screenwidth()
         sh = intro.winfo_screenheight()
         x = max(0, (sw - w) // 2)
         y = max(0, (sh - h) // 2)
         intro.geometry(f"{w}x{h}+{x}+{y}")
 
-        canvas = Canvas(intro, width=w, height=h, bg="#020607", highlightthickness=0)
+        canvas = Canvas(intro, width=w, height=h, bg="#050006", highlightthickness=0)
         canvas.pack(fill=BOTH, expand=True)
 
         fps = 30
         frames = max(60, int(sound_duration * fps))
+        envelope = self.sound_envelope("load", frames, sound_duration)
         modules = [
-            ("CORE", "loading interface shell"),
-            ("REC", "arming recorder engine"),
-            ("AHK", "checking AutoHotkey bridge"),
-            ("PY", "mounting Python export tools"),
-            ("WORK", "indexing workspace files"),
-            ("REPLAY", "warming screenshot replay cache"),
-            ("OCR", "preparing screen text tools"),
-            ("UI", "finalizing CodeHub window"),
+            ("CORE", "boot shell"),
+            ("REC", "input engine"),
+            ("AHK", "hotkey bridge"),
+            ("PY", "runtime pack"),
+            ("WORK", "workspace"),
+            ("REPLAY", "replay cache"),
+            ("AUDIO", "sound bus"),
+            ("UI", "interface"),
         ]
-        spinner_frames = ["◜", "◠", "◝", "◞", "◡", "◟"]
+        spinner_frames = ["|", "/", "-", "\\"]
 
         def reveal_main_ui():
+            try:
+                channel = self._sound_channels.get("load")
+                if channel:
+                    channel.stop()
+            except Exception:
+                pass
             try:
                 import winsound
                 winsound.PlaySound(None, winsound.SND_PURGE)
@@ -1499,100 +1566,310 @@ class CodeHubApp:
             except Exception:
                 pass
 
+        anim_started = time.perf_counter()
+
         def draw(i=0):
-            pct = min(1.0, i / float(frames))
+            elapsed = time.perf_counter() - anim_started
+            pct = min(1.0, elapsed / sound_duration)
+            frame_index = min(len(envelope) - 1, max(0, int(pct * (len(envelope) - 1))))
+            live = envelope[frame_index]
+            nearby = envelope[max(0, frame_index - 2):min(len(envelope), frame_index + 3)]
+            beat = max(live, max(nearby or [0.0]) * 0.82)
             canvas.delete("all")
 
-            # Modern dark glass background.
-            canvas.create_rectangle(0, 0, w, h, fill="#020607", outline="")
-            canvas.create_rectangle(18, 18, w - 18, h - 18, fill="#050D10", outline="#183742", width=1)
-            canvas.create_rectangle(30, 30, w - 30, h - 30, fill="#071013", outline="#10272F", width=1)
+            red = "#ff1744"
+            red2 = "#a8002a"
+            hot = "#ff4b6d"
+            dim = "#24000b"
+            bg = "#050006"
 
-            # Soft grid / scanline mix: old PC feeling, cleaner modern look.
-            for xx in range(50, w - 50, 34):
-                canvas.create_line(xx, 42, xx, h - 42, fill="#071A1C")
-            for yy in range(48, h - 48, 18):
-                color = "#061316" if (yy // 18 + i // 4) % 2 == 0 else "#071A1D"
-                canvas.create_line(42, yy, w - 42, yy, fill=color)
+            canvas.create_rectangle(0, 0, w, h, fill=bg, outline="")
+            for yy in range(-40, h + 60, 18):
+                offset = int((i * 3 + yy) % 48)
+                canvas.create_line(0, yy + offset, w, yy - 80 + offset, fill="#100007")
+            for xx in range(40, w, 54):
+                canvas.create_line(xx, 24, xx - 90, h - 24, fill="#0d0007")
 
-            # Brand header.
-            canvas.create_text(w // 2, 60, text="CODEHUB", fill="#E8F0F8", font=("Segoe UI", 31, "bold"))
-            canvas.create_text(w // 2, 94, text="macro maker  ·  scripts  ·  replay  ·  tools", fill="#7A98B8", font=("Consolas", 10))
+            glow = int(70 + 120 * beat)
+            border = hot if beat > 0.42 else red
+            canvas.create_rectangle(18, 18, w - 18, h - 18, fill="#080008", outline=border, width=2)
+            canvas.create_rectangle(32, 32, w - 32, h - 32, fill="#0d000d", outline="#3d0014", width=1)
+            canvas.create_line(32, 32, 126, 32, fill=hot, width=3)
+            canvas.create_line(w - 126, h - 32, w - 32, h - 32, fill=hot, width=3)
+            canvas.create_polygon(32, 92, 70, 52, 144, 52, 114, 82, fill="#14000b", outline=red2)
+            canvas.create_polygon(w - 32, h - 92, w - 70, h - 52, w - 144, h - 52, w - 114, h - 82, fill="#14000b", outline=red2)
 
-            # Center dial/network ring.
-            cx, cy = w // 2, 174
-            pulse = 0.5 + 0.5 * math.sin(i * 0.18)
-            for ring in range(4):
-                rr = 34 + ring * 20 + int(pulse * 3)
-                outline = mix_hex(C["accent"], C["green"], 0.25 + ring * 0.13)
-                canvas.create_oval(cx - rr, cy - rr, cx + rr, cy + rr, outline=mix_hex(outline, "#020607", 0.35), width=1)
-            for n in range(28):
-                a = (i * 0.095) + n * (math.pi * 2 / 28)
-                rr = 35 + (n % 6) * 12
+            canvas.create_text(w // 2 + 2, 67 + 2, text="CODEHUB", fill="#3a000e", font=("Segoe UI", 34, "bold"))
+            canvas.create_text(w // 2, 67, text="CODEHUB", fill="#fff4f7", font=("Segoe UI", 34, "bold"))
+            canvas.create_text(w // 2, 100, text="macro maker / scripts / replay / tools", fill="#ff6b84", font=("Consolas", 10, "bold"))
+
+            cx, cy = w // 2, 184
+            pulse = 0.55 + 0.45 * math.sin(i * 0.16)
+            core_r = 28 + int(10 * beat)
+            for ring in range(6):
+                rr = core_r + ring * 17 + int(pulse * 5)
+                col = hot if ring < 2 or beat > 0.5 else red2
+                canvas.create_oval(cx - rr, cy - rr, cx + rr, cy + rr, outline=mix_hex(col, bg, ring * 0.11), width=2 if ring < 2 else 1)
+            canvas.create_oval(cx - core_r, cy - core_r, cx + core_r, cy + core_r, fill=mix_hex(red, "#ffffff", min(0.35, beat * 0.35)), outline=hot, width=2)
+            canvas.create_text(cx, cy, text="CH", fill="#120005", font=("Segoe UI", 18, "bold"))
+
+            for n in range(40):
+                a = (i * 0.055) + n * (math.pi * 2 / 40)
+                rr = 78 + (n % 5) * 13 + int(beat * 9)
                 x1 = cx + math.cos(a) * rr
                 y1 = cy + math.sin(a) * rr
-                size = 2 + (n % 4)
-                col = C["accent"] if n % 3 else C["green"]
-                canvas.create_oval(x1 - size, y1 - size, x1 + size, y1 + size, fill=col, outline="")
+                x2 = cx + math.cos(a + 0.09) * (rr + 12)
+                y2 = cy + math.sin(a + 0.09) * (rr + 12)
+                col = hot if n % 4 == 0 else red
+                canvas.create_line(x1, y1, x2, y2, fill=mix_hex(col, bg, 0.2), width=2 if beat > 0.55 else 1)
 
-            # Chunky modem signal bars.
-            for n in range(32):
-                bx = 70 + n * 19
-                local = ((i + n * 4) % 22) / 22
-                bh = 10 + int(70 * local)
-                if n % 6 == 0:
-                    col = "#65FF9A"
-                elif n % 2 == 0:
-                    col = C["accent"]
-                else:
-                    col = mix_hex(C["accent"], C["green"], 0.45)
-                canvas.create_rectangle(bx, 282 - bh, bx + 10, 282, fill=col, outline="")
+            wave_y = 286
+            for n in range(52):
+                bx = 52 + n * 13
+                env_idx = min(len(envelope) - 1, max(0, frame_index - 26 + n))
+                env = envelope[env_idx]
+                long_buh = math.sin((n * 0.45) + i * 0.18) * 0.5 + 0.5
+                impact = max(env, beat * 0.6)
+                bh = 6 + int(12 * long_buh + 68 * impact)
+                col = hot if env > 0.62 or n % 7 == 0 else red
+                canvas.create_rectangle(bx, wave_y - bh, bx + 6, wave_y + bh // 4, fill=col, outline="")
 
-            # What is loading: module cards.
             active_count = min(len(modules), max(1, int(pct * len(modules)) + 1))
-            card_y = 302
-            card_w = 78
+            card_y = 314
+            card_w = 82
             gap = 9
             start_x = (w - (len(modules) * card_w + (len(modules) - 1) * gap)) // 2
             for idx, (code, desc) in enumerate(modules):
                 x0 = start_x + idx * (card_w + gap)
                 loaded = idx < active_count - 1
                 active = idx == active_count - 1
-                border = C["green"] if loaded else (C["accent"] if active else "#1C3338")
-                fill = "#0B1B1F" if active else "#071013"
+                border = hot if loaded else (red if active else "#3a0011")
+                fill = "#1a0010" if active else "#0b0008"
                 canvas.create_rectangle(x0, card_y, x0 + card_w, card_y + 42, fill=fill, outline=border, width=1)
-                canvas.create_text(x0 + card_w // 2, card_y + 14, text=("✓ " if loaded else "") + code, fill=border, font=("Consolas", 9, "bold"))
-                canvas.create_text(x0 + card_w // 2, card_y + 30, text="READY" if loaded else ("LOAD" if active else "WAIT"), fill="#7A98B8", font=("Consolas", 7))
+                canvas.create_text(x0 + card_w // 2, card_y + 14, text=("OK " if loaded else "") + code, fill=border, font=("Consolas", 9, "bold"))
+                canvas.create_text(x0 + card_w // 2, card_y + 30, text="READY" if loaded else ("SYNC" if active else "WAIT"), fill="#b65468", font=("Consolas", 7))
 
-            # Terminal status line.
             active_desc = modules[min(len(modules) - 1, active_count - 1)][1]
             spinner = spinner_frames[i % len(spinner_frames)]
-            canvas.create_rectangle(58, 356, w - 58, 384, fill="#03100C", outline="#1B3A2A")
-            canvas.create_text(76, 370, anchor="w", text=f"{spinner} {active_desc}...", fill="#65FF9A", font=("Consolas", 10))
-            canvas.create_text(w - 78, 370, anchor="e", text=f"{int(pct * 100):03d}%", fill="#9FCBFF", font=("Consolas", 10, "bold"))
+            canvas.create_rectangle(58, 366, w - 58, 392, fill="#120006", outline="#5a001d")
+            canvas.create_text(76, 379, anchor="w", text=f"{spinner} {active_desc}...", fill="#ff6b84", font=("Consolas", 10, "bold"))
+            canvas.create_text(w - 78, 379, anchor="e", text=f"{int(pct * 100):03d}%", fill="#ffffff", font=("Consolas", 10, "bold"))
 
-            # Smooth progress with chunky segments.
-            bar_x0, bar_y0 = 78, 400
-            bar_x1, bar_y1 = w - 78, 416
-            canvas.create_rectangle(bar_x0, bar_y0, bar_x1, bar_y1, outline="#254835", width=1)
+            bar_x0, bar_y0 = 78, 406
+            bar_x1, bar_y1 = w - 78, 421
+            canvas.create_rectangle(bar_x0, bar_y0, bar_x1, bar_y1, outline="#5a001d", width=1)
             filled = int((bar_x1 - bar_x0 - 6) * pct)
             for chunk_x in range(0, filled, 20):
                 x0 = bar_x0 + 3 + chunk_x
                 x1 = min(bar_x0 + 3 + filled, x0 + 14)
-                canvas.create_rectangle(x0, bar_y0 + 3, x1, bar_y1 - 3, fill=C["accent"] if chunk_x % 40 else C["green"], outline="")
+                canvas.create_rectangle(x0, bar_y0 + 3, x1, bar_y1 - 3, fill=hot if chunk_x % 40 else red, outline="")
 
-            if i < frames:
+            if beat > 0.62:
+                canvas.create_rectangle(0, 0, w, h, outline=hot, width=3)
+
+            if pct < 1.0:
                 intro.after(int(1000 / fps), lambda: draw(i + 1))
             else:
                 intro.after(250, reveal_main_ui)
 
-        draw()
+        intro.after(0, draw)
 
     def show_ready_window(self):
         # Keep the real app hidden until the splash animation is done.
         self.root.withdraw()
         self.root.update_idletasks()
         self.root.after(50, self.show_app_intro_animation)
+
+    def init_sound_system(self):
+        try:
+            import pygame
+            if not pygame.mixer.get_init():
+                pygame.mixer.pre_init(44100, -16, 2, 512)
+                pygame.mixer.init()
+            self._pygame = pygame
+            self._sound_ready = True
+            for name in ("load", "click", "tab"):
+                self.load_sound(name)
+        except Exception:
+            self._pygame = None
+            self._sound_ready = False
+
+    def load_sound(self, name):
+        if not self._sound_ready:
+            return None
+        if name in self._sound_cache:
+            return self._sound_cache[name]
+        path = first_asset_named(name)
+        if not path:
+            self._sound_cache[name] = None
+            return None
+        try:
+            sound = self._pygame.mixer.Sound(str(path))
+            self._sound_cache[name] = sound
+            return sound
+        except Exception:
+            self._sound_cache[name] = None
+            return None
+
+    def sound_envelope(self, name, buckets=120, seconds=4.0):
+        sound = self.load_sound(name)
+        if not sound or not self._pygame:
+            return [0.25] * buckets
+        try:
+            import array
+            init = self._pygame.mixer.get_init() or (44100, -16, 2)
+            freq = int(init[0] or 44100)
+            channels = int(init[2] or 2)
+            raw = sound.get_raw()
+            samples = array.array("h")
+            samples.frombytes(raw)
+            if sys.byteorder != "little":
+                samples.byteswap()
+            total_frames = max(1, len(samples) // max(1, channels))
+            limit_frames = min(total_frames, max(1, int(freq * seconds)))
+            frames_per_bucket = max(1, limit_frames // buckets)
+            envelope = []
+            for b in range(buckets):
+                start = b * frames_per_bucket * channels
+                end = min(len(samples), start + frames_per_bucket * channels)
+                if start >= end:
+                    envelope.append(0.0)
+                    continue
+                peak = max(abs(v) for v in samples[start:end])
+                envelope.append(min(1.0, peak / 32768.0))
+            max_peak = max(envelope) or 1.0
+            return [min(1.0, (v / max_peak) ** 0.55) for v in envelope]
+        except Exception:
+            return [0.25] * buckets
+
+    def play_ui_sound(self, name, force=False, max_ms=None):
+        if not force:
+            if name == "click" and hasattr(self, "click_sounds_enabled") and not self.click_sounds_enabled.get():
+                return
+            if name == "tab" and hasattr(self, "tab_sounds_enabled") and not self.tab_sounds_enabled.get():
+                return
+            if name not in ("click", "tab") and hasattr(self, "ui_sounds_enabled") and not self.ui_sounds_enabled.get():
+                return
+        sound = self.load_sound(name)
+        if not sound:
+            return
+        try:
+            channel = sound.play()
+            if channel:
+                self._sound_channels[name] = channel
+                if max_ms:
+                    self.root.after(int(max_ms), lambda ch=channel: ch.stop())
+        except Exception:
+            pass
+
+    def bind_ui_sounds(self):
+        self.root.bind_all("<ButtonRelease-1>", self._on_global_click_sound, add="+")
+        self.tabs.bind("<<NotebookTabChanged>>", lambda _e: self.play_ui_sound("tab"), add="+")
+        if hasattr(self, "tools"):
+            self.tools.bind("<<NotebookTabChanged>>", lambda _e: self.play_ui_sound("tab"), add="+")
+
+    def _on_global_click_sound(self, event=None):
+        widget = getattr(event, "widget", None)
+        if not widget:
+            return
+        try:
+            if widget == self.tabs or widget == getattr(self, "tools", None) or widget.winfo_class() == "TNotebook":
+                return
+        except Exception:
+            pass
+        if str(widget).startswith(str(self.root)):
+            self.play_ui_sound("click")
+
+    def install_custom_cursor(self):
+        if not self.custom_cursor_enabled:
+            return
+        try:
+            self.apply_hidden_cursor(self.root)
+            cursor = Toplevel(self.root)
+            cursor.overrideredirect(True)
+            cursor.attributes("-topmost", True)
+            cursor.configure(bg="#010101")
+            try:
+                cursor.attributes("-transparentcolor", "#010101")
+            except Exception:
+                pass
+            canvas = Canvas(cursor, width=34, height=34, bg="#010101", highlightthickness=0)
+            canvas.pack(fill=BOTH, expand=True)
+            self.draw_codehub_cursor(canvas)
+            cursor.geometry("34x34+-100+-100")
+            self.cursor_window = cursor
+            self.make_window_clickthrough(cursor)
+            self.root.bind_all("<Motion>", self.move_custom_cursor, add="+")
+            self.root.bind("<FocusOut>", lambda _e: self.hide_custom_cursor(), add="+")
+            self.root.bind("<FocusIn>", lambda _e: self.show_custom_cursor(), add="+")
+        except Exception:
+            self.cursor_window = None
+
+    def apply_hidden_cursor(self, widget):
+        try:
+            widget.configure(cursor="none")
+        except Exception:
+            pass
+        try:
+            for child in widget.winfo_children():
+                self.apply_hidden_cursor(child)
+        except Exception:
+            pass
+
+    def draw_codehub_cursor(self, canvas):
+        cyan = "#24f6ff"
+        blue = "#0b77ff"
+        dark = "#03121a"
+        canvas.create_polygon(3, 2, 24, 12, 15, 16, 10, 30, fill=dark, outline=cyan, width=2)
+        canvas.create_line(6, 6, 21, 13, fill="#b7fbff", width=1)
+        canvas.create_polygon(15, 16, 25, 25, 20, 28, 11, 21, fill=blue, outline=cyan, width=1)
+        canvas.create_line(4, 22, 10, 30, fill=cyan, width=2)
+        canvas.create_oval(24, 3, 31, 10, outline=cyan, width=1)
+        canvas.create_line(27, 1, 27, 12, fill=cyan, width=1)
+        canvas.create_line(22, 6, 32, 6, fill=cyan, width=1)
+
+    def make_window_clickthrough(self, window):
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
+            ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
+            ex_style |= 0x00000020 | 0x00080000 | 0x00000080
+            ctypes.windll.user32.SetWindowLongW(hwnd, -20, ex_style)
+        except Exception:
+            pass
+
+    def move_custom_cursor(self, event):
+        if not self.cursor_window or not self.cursor_window.winfo_exists():
+            return
+        try:
+            if self.root.state() == "iconic":
+                self.hide_custom_cursor()
+                return
+            x = int(event.x_root) + 1
+            y = int(event.y_root) + 1
+            if self._last_cursor_xy == (x, y):
+                return
+            self._last_cursor_xy = (x, y)
+            self.cursor_window.geometry(f"34x34+{x}+{y}")
+            self.cursor_window.lift()
+        except Exception:
+            pass
+
+    def hide_custom_cursor(self):
+        try:
+            if self.cursor_window and self.cursor_window.winfo_exists():
+                self.cursor_window.geometry("34x34+-100+-100")
+        except Exception:
+            pass
+
+    def show_custom_cursor(self):
+        try:
+            if self.cursor_window and self.cursor_window.winfo_exists():
+                self.cursor_window.lift()
+        except Exception:
+            pass
 
     def center_geometry(self, width, height):
         screen_w = self.root.winfo_screenwidth()
@@ -1987,8 +2264,13 @@ class CodeHubApp:
         self.editor.configure(fg=C["text"])
         self.editor.pack(fill=BOTH, expand=True)
         self.editor.bind("<Tab>", self.editor_autocomplete)
+        self.editor.bind("<Control-f>", self.show_editor_find)
+        self.editor.bind("<Control-F>", self.show_editor_find)
+        self.editor.bind("<Control-h>", self.show_editor_replace)
+        self.editor.bind("<Control-H>", self.show_editor_replace)
         self.editor.bind("<<Modified>>", self.on_editor_modified)
         self.editor.bind("<Button-3>", self.editor_context_menu)
+        self.editor.tag_configure("find_match", background=C["orange"], foreground="#000000")
 
         self.refresh_files()
         return tab
@@ -2204,7 +2486,8 @@ class CodeHubApp:
 
         for txt, cmd in [("Load", self.load_review_recording), ("Play Preview", self.play_review),
                           ("Pause", self.pause_review), ("Stop", self.stop_visual_replay),
-                          ("Rewind", self.rewind_review), ("Open Video", self.open_review_video)]:
+                          ("Rewind", self.rewind_review), ("Open Video", self.open_review_video),
+                          ("Open Audio", self.open_review_audio)]:
             ttk.Button(top, text=txt, style="Ghost.TButton", command=cmd).pack(side=LEFT, padx=3)
 
         ttk.Label(top, text="Speed:", style="PanelMuted2.TLabel").pack(side=LEFT, padx=(10, 4))
@@ -2301,6 +2584,12 @@ class CodeHubApp:
         canvas.bind_all("<MouseWheel>", _mousewheel)
 
         self._section(pad, "Export Folder")
+        ttk.Label(
+            pad,
+            text="This folder is where CodeHub saves generated/exported scripts. AutoHotkey itself is picked below as an .exe file.",
+            style="Muted.TLabel",
+            wraplength=900,
+        ).pack(anchor="w", pady=(2, 6))
         er = Frame(pad, bg=C["bg"], pady=4)
         er.pack(fill=X)
         ttk.Entry(er, textvariable=self.export_dir_var).pack(side=LEFT, fill=X, expand=True, padx=(0, 8))
@@ -2358,6 +2647,15 @@ class CodeHubApp:
                        command=lambda v=var: self.pick_theme_color(v)).pack(side=LEFT, padx=(0, 8))
         ttk.Button(cr, text="Save Custom Theme", style="Ghost.TButton", command=self.save_ui_settings).pack(side=LEFT)
 
+        self._section(pad, "Sounds")
+        sr = Frame(pad, bg=C["bg"], pady=4)
+        sr.pack(fill=X)
+        ttk.Checkbutton(sr, text="Click sounds", variable=self.click_sounds_enabled, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
+        ttk.Checkbutton(sr, text="Tab sounds", variable=self.tab_sounds_enabled, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
+        ttk.Checkbutton(sr, text="Loading sound", variable=self.loading_sound_enabled, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
+        ttk.Button(sr, text="Test Click", style="Ghost.TButton", command=lambda: self.play_ui_sound("click", force=True)).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(sr, text="Test Tab", style="Ghost.TButton", command=lambda: self.play_ui_sound("tab", force=True)).pack(side=LEFT)
+
         self._section(pad, "Updates")
         ur = Frame(pad, bg=C["bg"], pady=4)
         ur.pack(fill=X)
@@ -2377,6 +2675,24 @@ class CodeHubApp:
         rr = Frame(pad, bg=C["bg"], pady=4)
         rr.pack(fill=X)
         ttk.Checkbutton(rr, text="Experimental OpenCV video capture", variable=self.record_replay_video, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
+        ttk.Checkbutton(rr, text="Record replay audio WAV", variable=self.record_replay_audio, command=self.save_permissions).pack(side=LEFT, padx=(0, 12))
+        ttk.Label(rr, text="Audio device:", style="Muted.TLabel").pack(side=LEFT, padx=(0, 6))
+        self.audio_device_combo = ttk.Combobox(rr, textvariable=self.replay_audio_device,
+                                               values=self.audio_device_names(), state="readonly", width=28)
+        self.audio_device_combo.pack(side=LEFT, padx=(0, 8))
+        ttk.Button(rr, text="Refresh Devices", style="Small.TButton", command=self.refresh_audio_devices).pack(side=LEFT)
+        ttk.Label(
+            pad,
+            text="Audio recording uses input/loopback devices. For game/system audio, pick Stereo Mix, loopback, or a virtual audio cable if Windows exposes one.",
+            style="Muted.TLabel",
+            wraplength=900,
+        ).pack(anchor="w", pady=(2, 6))
+        ttk.Label(
+            pad,
+            text="CodeHub will not record microphone/headset devices here. Replay audio is only for game/system audio sources.",
+            style="Muted.TLabel",
+            wraplength=900,
+        ).pack(anchor="w", pady=(0, 6))
 
         rr2 = Frame(pad, bg=C["bg"], pady=4)
         rr2.pack(fill=X)
@@ -2395,17 +2711,19 @@ class CodeHubApp:
         ttk.Checkbutton(pr, text="Allow assistant to run script commands", variable=self.ai_can_run, command=self.save_permissions).pack(anchor="w", pady=2)
 
         self._section(pad, "Data Paths")
+        dr = Frame(pad, bg=C["bg"], pady=4)
+        dr.pack(fill=X)
+        self.data_paths_toggle_btn = ttk.Button(
+            dr,
+            text="Hide Data Paths" if self.show_data_paths.get() else "Show Data Paths",
+            style="Ghost.TButton",
+            command=self.toggle_data_paths,
+        )
+        self.data_paths_toggle_btn.pack(side=LEFT)
         info = self._text_box(pad, height=8, fg=C["text2"])
+        self.data_paths_info = info
         info.pack(fill=BOTH, expand=True, pady=(4, 0))
-        info.insert(END, f"Settings  : {SETTINGS_PATH}\n")
-        info.insert(END, f"Recordings: {RECORDINGS_PATH}\n")
-        info.insert(END, f"Knowledge : {KNOWLEDGE_PATH}\n")
-        info.insert(END, f"Exports   : {self.export_dir_var.get()}\n")
-        info.insert(END, f"Videos    : {DATA_DIR / 'review_videos'}\n")
-        info.insert(END, f"Screens   : {DATA_DIR / 'review_frames'}\n\n")
-        info.insert(END, "Generated scripts include comments for hotkeys, editing, and watermark removal.\n")
-        info.insert(END, "All recordings persist as JSON; they survive app restarts.\n")
-        info.configure(state="disabled")
+        self.refresh_data_paths_info()
 
         return tab
 
@@ -2434,6 +2752,8 @@ class CodeHubApp:
         self.is_recording = True
         self.review_shots = []
         self.review_video_path = None
+        self.review_audio_path = None
+        self.review_video_meta = {}
         self.feed.delete("1.0", END)
         self.settings["default_export_kind"] = self.default_export_kind.get()
         write_json(SETTINGS_PATH, self.settings)
@@ -2443,12 +2763,15 @@ class CodeHubApp:
         self.start_button.state(["disabled"])
         self.stop_button.state(["!disabled"])
         self.rec_status_frame.configure(bg=C["red"])
-        self.recorder.start(self.mode.get())
         if self.record_replay_video.get():
             self.start_replay_video_capture()
+        if self.record_replay_audio.get():
+            self.start_replay_audio_capture()
+        self.recorder.start(self.mode.get())
         self.capture_review_snapshot("start")
         if self.record_screenshots.get():
-            self.root.after(max(50, int(1000 / max(1, self.builder_number(self.review_fps.get(), 10)))), self.capture_review_tick)
+            screenshot_fps = self.review_screenshot_fps()
+            self.root.after(max(16, int(1000 / screenshot_fps)), self.capture_review_tick)
 
     def stop_recording(self):
         if self.macro_locked or not self.is_recording:
@@ -2456,6 +2779,7 @@ class CodeHubApp:
         self.is_recording = False
         self.capture_review_snapshot("stop")
         self.stop_replay_video_capture()
+        self.stop_replay_audio_capture()
         events = self.recorder.stop()
         self.rec_status_frame.configure(bg=C["border"])
         self.status_bar.set_color(C["text3"])
@@ -2479,6 +2803,8 @@ class CodeHubApp:
             "events": events,
             "review_screenshots": getattr(self, "review_shots", []),
             "review_video": self.review_video_path or "",
+            "review_video_meta": self.review_video_meta or {},
+            "review_audio": self.review_audio_path or "",
         }
         self.recordings.setdefault("recordings", []).append(record)
         write_json(RECORDINGS_PATH, self.recordings)
@@ -2507,13 +2833,13 @@ class CodeHubApp:
                 review_dir = DATA_DIR / "review_frames"
                 review_dir.mkdir(parents=True, exist_ok=True)
                 stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                path = review_dir / f"{stamp}_{label}.png"
+                path = review_dir / f"{stamp}_{label}.jpg"
                 with mss.mss() as grabber:
                     monitor = grabber.monitors[1]
                     shot = grabber.grab(monitor)
                     image = Image.frombytes("RGB", shot.size, shot.rgb)
-                    image.thumbnail((640, 360))
-                    image.save(path, optimize=True)
+                    image.thumbnail((960, 540))
+                    image.save(path, quality=72)
                 self.review_shots.append(str(path))
             except Exception:
                 pass
@@ -2526,8 +2852,15 @@ class CodeHubApp:
         if not self.is_recording:
             return
         self.capture_review_snapshot("tick")
-        interval = max(50, int(1000 / max(1, self.builder_number(self.review_fps.get(), 10))))
+        screenshot_fps = self.review_screenshot_fps()
+        interval = max(16, int(1000 / screenshot_fps))
         self.root.after(interval, self.capture_review_tick)
+
+    def review_screenshot_fps(self):
+        requested = max(1, self.builder_number(self.review_fps.get(), 60))
+        if self.record_replay_video.get():
+            return min(12, requested)
+        return min(30, requested)
 
     def start_replay_video_capture(self):
         self.review_video_path = None
@@ -2542,6 +2875,13 @@ class CodeHubApp:
             out_path = replay_dir / f"CodeHub_Replay_{stamp}.avi"
             fps = max(30, min(MAX_REPLAY_FPS, self.builder_number(self.review_fps.get(), 60)))
             self.review_video_path = str(out_path)
+            self.review_video_meta = {
+                "requested_fps": float(fps),
+                "started": time.perf_counter(),
+                "frames": 0,
+                "duration": 0.0,
+                "playback_fps": 30.0,
+            }
             self.replay_video_stop_event = threading.Event()
             self.replay_video_start_time = time.perf_counter()
             self.replay_video_thread = threading.Thread(
@@ -2614,6 +2954,16 @@ class CodeHubApp:
                     else:
                         next_frame = time.perf_counter()
 
+                duration = max(0.001, time.perf_counter() - self.replay_video_start_time) if self.replay_video_start_time else 0.0
+                playback_fps = frames_written / duration if duration > 0 else fps
+                self.review_video_meta = {
+                    "requested_fps": float(fps),
+                    "frames": int(frames_written),
+                    "duration": float(duration),
+                    "playback_fps": float(max(1.0, min(240.0, playback_fps))),
+                    "width": int(width),
+                    "height": int(height),
+                }
                 if frames_written < 3:
                     raise RuntimeError("Replay recording ended before enough frames were saved.")
         except Exception as e:
@@ -2650,6 +3000,109 @@ class CodeHubApp:
         except Exception:
             self.review_video_path = None
 
+    def start_replay_audio_capture(self):
+        self.review_audio_path = None
+        if self.replay_audio_thread and self.replay_audio_thread.is_alive():
+            return
+        try:
+            device_index = self.selected_audio_device_index()
+            device_label = self.selected_audio_device_label(device_index)
+            if not self.is_game_audio_device(device_label):
+                self.status.set("Replay audio skipped: pick Stereo Mix, loopback, virtual cable, or Voicemeeter to record game audio. Mic devices are ignored.")
+                return
+            audio_dir = DATA_DIR / "review_audio"
+            audio_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_path = audio_dir / f"CodeHub_ReplayAudio_{stamp}.wav"
+            self.review_audio_path = str(out_path)
+            self.replay_audio_stop_event = threading.Event()
+            self.replay_audio_thread = threading.Thread(
+                target=self._replay_audio_worker,
+                args=(str(out_path), device_index, self.replay_audio_stop_event),
+                daemon=True,
+            )
+            self.replay_audio_thread.start()
+            self.status.set(f"Recording replay audio from {device_label or 'Default input'}")
+        except Exception as e:
+            self.review_audio_path = None
+            self.replay_audio_thread = None
+            self.status.set(f"Replay audio failed: {e}")
+
+    def _replay_audio_worker(self, out_path, device_index, stop_event):
+        try:
+            import queue
+            import wave
+            import sounddevice as sd
+
+            sample_rate = 44100
+            channels = 2
+            q = queue.Queue()
+
+            def callback(indata, frames, time_info, status):
+                if status:
+                    pass
+                q.put(bytes(indata))
+
+            with wave.open(out_path, "wb") as wf:
+                wf.setnchannels(channels)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                try:
+                    stream = sd.RawInputStream(
+                        samplerate=sample_rate,
+                        blocksize=2048,
+                        device=device_index,
+                        channels=channels,
+                        dtype="int16",
+                        callback=callback,
+                    )
+                except Exception:
+                    channels = 1
+                    wf.setnchannels(channels)
+                    stream = sd.RawInputStream(
+                        samplerate=sample_rate,
+                        blocksize=2048,
+                        device=device_index,
+                        channels=channels,
+                        dtype="int16",
+                        callback=callback,
+                    )
+                with stream:
+                    while not stop_event.is_set():
+                        try:
+                            wf.writeframes(q.get(timeout=0.25))
+                        except queue.Empty:
+                            pass
+                    while not q.empty():
+                        wf.writeframes(q.get_nowait())
+        except Exception as e:
+            self.root.after(0, lambda err=e: self.status.set(f"Replay audio failed: {err}"))
+            try:
+                if out_path and Path(out_path).exists() and Path(out_path).stat().st_size < 1024:
+                    Path(out_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def stop_replay_audio_capture(self):
+        event = self.replay_audio_stop_event
+        thread = self.replay_audio_thread
+        self.replay_audio_stop_event = None
+        self.replay_audio_thread = None
+        if event:
+            event.set()
+        if thread and thread.is_alive():
+            try:
+                thread.join(timeout=5)
+            except Exception:
+                pass
+        try:
+            if self.review_audio_path:
+                p = Path(self.review_audio_path)
+                if not p.exists() or p.stat().st_size < 1024:
+                    self.review_audio_path = None
+        except Exception:
+            self.review_audio_path = None
+
     def open_review_video(self):
         path = self.review_video_path
         if not path:
@@ -2666,6 +3119,23 @@ class CodeHubApp:
                 webbrowser.open(Path(path).as_uri())
         except Exception as e:
             messagebox.showerror(APP_NAME, f"Could not open replay video.\n\n{e}")
+
+    def open_review_audio(self):
+        path = self.review_audio_path
+        if not path:
+            _, rec = self.selected_review_recording()
+            if rec:
+                path = rec.get("review_audio")
+        if not path or not Path(path).exists():
+            messagebox.showinfo(APP_NAME, "No replay audio WAV exists for this recording. Enable replay audio in Settings, then record a new macro.")
+            return
+        try:
+            if os.name == "nt":
+                os.startfile(path)
+            else:
+                webbrowser.open(Path(path).as_uri())
+        except Exception as e:
+            messagebox.showerror(APP_NAME, f"Could not open replay audio.\n\n{e}")
 
     def refresh_recordings(self):
         if not hasattr(self, "recording_list"):
@@ -2896,6 +3366,11 @@ class CodeHubApp:
             self.watch_external_macros()
             if self.current_editor_file and not Path(self.current_editor_file).exists():
                 self.current_editor_file = None
+                self.current_editor_saved_text = ""
+                self.editor_dirty = False
+                self.editor_undo_stack.clear()
+                if hasattr(self, "editor"):
+                    self.editor.delete("1.0", END)
                 self.editor_path.set("Open file was deleted outside CodeHub")
         except Exception:
             pass
@@ -2929,7 +3404,10 @@ class CodeHubApp:
             return
         self.review_events = rec.get("events", [])
         self.review_video_path = rec.get("review_video") or None
+        self.review_video_meta = rec.get("review_video_meta") or {}
+        self.review_audio_path = rec.get("review_audio") or None
         self.review_shot_paths = [p for p in rec.get("review_screenshots", []) if Path(p).exists()]
+        self.review_photo_cache.clear()
         self.review_shot_index = 0
         self.review_play_index = 0
         self.review_playing = False
@@ -2944,6 +3422,8 @@ class CodeHubApp:
         video_exists = bool(self.review_video_path and Path(self.review_video_path).exists())
         if video_exists:
             self.review_output.insert(END, f"Video : {self.review_video_path}\n")
+        if self.review_audio_path and Path(self.review_audio_path).exists():
+            self.review_output.insert(END, f"Audio : {self.review_audio_path}\n")
         if self.review_shot_paths:
             self.review_output.insert(END, f"Frames: {len(self.review_shot_paths)} screenshots\n")
             self.show_review_frame(0)
@@ -2969,11 +3449,17 @@ class CodeHubApp:
             self.review_image_label.configure(text=f"Frame {index+1}/{len(self.review_shot_paths)}\n{path}", image="")
             return
         try:
-            img = Image.open(path).convert("RGB")
-            max_w = max(360, self.review_image_label.winfo_width() or 640)
-            max_h = max(240, self.review_image_label.winfo_height() or 360)
-            img.thumbnail((max_w, max_h))
-            self.review_photo = ImageTk.PhotoImage(img)
+            cache_key = (str(path), max(360, self.review_image_label.winfo_width() or 640), max(240, self.review_image_label.winfo_height() or 360))
+            if cache_key in self.review_photo_cache:
+                self.review_photo = self.review_photo_cache[cache_key]
+            else:
+                img = Image.open(path).convert("RGB")
+                img.thumbnail((cache_key[1], cache_key[2]))
+                self.review_photo = ImageTk.PhotoImage(img)
+                self.review_photo_cache[cache_key] = self.review_photo
+                if len(self.review_photo_cache) > 90:
+                    for old_key in list(self.review_photo_cache.keys())[:30]:
+                        self.review_photo_cache.pop(old_key, None)
             self.review_image_label.configure(image=self.review_photo,
                                                text=f"Frame {index+1}/{len(self.review_shot_paths)}",
                                                compound="top")
@@ -2985,6 +3471,17 @@ class CodeHubApp:
             self.load_review_recording()
         if not self.review_events:
             return
+
+        video = self.review_video_path
+        if not video:
+            _, rec = self.selected_review_recording()
+            if rec:
+                video = rec.get("review_video")
+        if video and Path(video).exists() and Image is not None and ImageTk is not None:
+            meta_frames = int((getattr(self, "review_video_meta", {}) or {}).get("frames") or 0)
+            if meta_frames == 0 or meta_frames >= 3:
+                self.play_review_video(video)
+                return
 
         # Screenshot/event preview is the default again. Open Video is separate.
 
@@ -3002,11 +3499,25 @@ class CodeHubApp:
         threading.Thread(target=self.visual_replay_worker, daemon=True).start()
 
     def pause_review(self):
+        if self.review_video_playing:
+            self.review_video_paused = not self.review_video_paused
+            if self.review_audio_channel:
+                try:
+                    if self.review_video_paused:
+                        self.review_audio_channel.pause()
+                    else:
+                        self.review_audio_channel.unpause()
+                except Exception:
+                    pass
+            self.status.set("Video replay paused" if self.review_video_paused else "Video replay resumed")
+            return
         if self.review_playing:
             self.review_paused = True
             self.status.set("Replay paused")
 
     def rewind_review(self):
+        if self.review_video_playing:
+            self.stop_visual_replay()
         self.review_play_index = 0
         self.review_shot_index = 0
         if self.review_shot_paths:
@@ -3020,8 +3531,109 @@ class CodeHubApp:
         self.review_replaying = False
         self.review_playing = False
         self.review_paused = False
+        self.review_video_playing = False
+        self.review_video_paused = False
+        if self.review_audio_channel:
+            try:
+                self.review_audio_channel.stop()
+            except Exception:
+                pass
+            self.review_audio_channel = None
         self.review_play_index = 0
         self.status.set("Replay stopped")
+
+    def play_review_video(self, video_path):
+        if self.review_video_playing and self.review_video_paused:
+            self.pause_review()
+            return
+        if self.review_video_playing:
+            return
+        self.stop_visual_replay()
+        self.review_video_playing = True
+        self.review_video_paused = False
+        self.virtual_keys.delete("1.0", END)
+        self.start_review_audio_if_available()
+        self.review_video_thread = threading.Thread(target=self.review_video_worker, args=(str(video_path),), daemon=True)
+        self.review_video_thread.start()
+
+    def start_review_audio_if_available(self):
+        path = self.review_audio_path
+        if not path:
+            _, rec = self.selected_review_recording()
+            if rec:
+                path = rec.get("review_audio")
+        if not path or not Path(path).exists() or not self._sound_ready:
+            return
+        try:
+            sound = self._pygame.mixer.Sound(str(path))
+            self.review_audio_channel = sound.play()
+        except Exception:
+            self.review_audio_channel = None
+
+    def review_video_worker(self, video_path):
+        cap = None
+        try:
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                raise RuntimeError("Could not open replay video.")
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+            video_meta = getattr(self, "review_video_meta", {}) or {}
+            macro_duration = max([float(e.get("time", 0)) for e in self.review_events] or [0.0])
+            meta_duration = float(video_meta.get("duration") or 0.0)
+            if frame_count > 1 and macro_duration > 0:
+                fps = frame_count / macro_duration
+            elif frame_count > 1 and meta_duration > 0:
+                fps = frame_count / meta_duration
+            else:
+                fps = cap.get(cv2.CAP_PROP_FPS) or self.builder_number(self.review_fps.get(), 60)
+            fps = max(1.0, min(240.0, float(fps)))
+            frame_index = 0
+            started = time.perf_counter()
+
+            while self.review_video_playing:
+                while self.review_video_paused and self.review_video_playing:
+                    time.sleep(0.03)
+                    started += 0.03
+                if not self.review_video_playing:
+                    break
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                try:
+                    speed = max(0.1, float(self.review_speed.get()))
+                except Exception:
+                    speed = 1.0
+                target = started + (frame_index / fps) / speed
+                wait = target - time.perf_counter()
+                if wait > 0:
+                    time.sleep(min(wait, 0.05))
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(frame)
+                max_w = max(360, self.review_image_label.winfo_width() or 640)
+                max_h = max(240, self.review_image_label.winfo_height() or 360)
+                img.thumbnail((max_w, max_h))
+                photo = ImageTk.PhotoImage(img)
+                elapsed = frame_index / fps
+                text = f"Video replay\nTime: {elapsed:.2f}s    Speed: {speed:.2f}x    Frame: {frame_index + 1}/{frame_count or '?'}"
+                self.root.after(0, lambda p=photo, t=text: self.show_review_video_frame(p, t))
+                self.root.after(0, lambda t=text: self.set_virtual_keys(t + "\n"))
+                frame_index += 1
+            self.root.after(0, lambda: self.status.set("Video replay finished"))
+        except Exception as e:
+            self.root.after(0, lambda err=e: self.status.set(f"Video replay failed, use Open Video: {err}"))
+        finally:
+            try:
+                if cap:
+                    cap.release()
+            except Exception:
+                pass
+            self.review_video_playing = False
+            self.review_video_paused = False
+
+    def show_review_video_frame(self, photo, text):
+        self.review_photo = photo
+        self.review_image_label.configure(image=self.review_photo, text=text, compound="top")
 
     def visual_replay_worker(self):
         if not self.review_events:
@@ -3074,6 +3686,109 @@ class CodeHubApp:
     def set_virtual_keys(self, text):
         self.virtual_keys.delete("1.0", END)
         self.virtual_keys.insert(END, text)
+
+    def show_editor_find(self, event=None):
+        self.open_find_replace(replace=False)
+        return "break"
+
+    def show_editor_replace(self, event=None):
+        self.open_find_replace(replace=True)
+        return "break"
+
+    def open_find_replace(self, replace=False):
+        if not hasattr(self, "editor"):
+            return
+        win = getattr(self, "find_window", None)
+        if win and win.winfo_exists():
+            win.lift()
+            if replace and hasattr(self, "replace_row"):
+                self.replace_row.pack(fill=X, pady=(6, 0))
+            return
+
+        win = Toplevel(self.root)
+        self.find_window = win
+        win.title("Find / Replace")
+        win.configure(bg=C["panel"])
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.geometry("+{}+{}".format(self.root.winfo_rootx() + 80, self.root.winfo_rooty() + 80))
+
+        pad = Frame(win, bg=C["panel"], padx=12, pady=12)
+        pad.pack(fill=BOTH, expand=True)
+        ttk.Label(pad, text="Find:", style="Muted.TLabel").pack(anchor="w")
+        self.find_text_var = StringVar(value=getattr(self, "find_text_var", StringVar()).get() if hasattr(self, "find_text_var") else "")
+        find_entry = ttk.Entry(pad, textvariable=self.find_text_var, width=42)
+        find_entry.pack(fill=X, pady=(2, 6))
+
+        self.replace_row = Frame(pad, bg=C["panel"])
+        ttk.Label(self.replace_row, text="Replace:", style="Muted.TLabel").pack(anchor="w")
+        self.replace_text_var = StringVar(value=getattr(self, "replace_text_var", StringVar()).get() if hasattr(self, "replace_text_var") else "")
+        ttk.Entry(self.replace_row, textvariable=self.replace_text_var, width=42).pack(fill=X, pady=(2, 0))
+        if replace:
+            self.replace_row.pack(fill=X, pady=(6, 0))
+
+        buttons = Frame(pad, bg=C["panel"], pady=8)
+        buttons.pack(fill=X)
+        ttk.Button(buttons, text="Find Next", style="Ghost.TButton", command=self.find_next_in_editor).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(buttons, text="Replace", style="Ghost.TButton", command=self.replace_current_find).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(buttons, text="Replace All", style="Accent.TButton", command=self.replace_all_in_editor).pack(side=LEFT)
+        ttk.Button(buttons, text="Close", style="Ghost.TButton", command=win.destroy).pack(side=RIGHT)
+        find_entry.bind("<Return>", lambda _e: self.find_next_in_editor())
+        find_entry.focus_set()
+
+    def clear_find_marks(self):
+        if hasattr(self, "editor"):
+            self.editor.tag_remove("find_match", "1.0", END)
+
+    def find_next_in_editor(self):
+        needle = self.find_text_var.get() if hasattr(self, "find_text_var") else ""
+        if not needle:
+            return
+        self.clear_find_marks()
+        start = self.editor.index("insert +1c")
+        idx = self.editor.search(needle, start, END, nocase=False)
+        if not idx:
+            idx = self.editor.search(needle, "1.0", END, nocase=False)
+        if not idx:
+            self.status.set(f"Not found: {needle}")
+            return
+        end = f"{idx}+{len(needle)}c"
+        self.editor.tag_add("find_match", idx, end)
+        self.editor.mark_set("insert", end)
+        self.editor.see(idx)
+        self.status.set(f"Found: {needle}")
+
+    def replace_current_find(self):
+        needle = self.find_text_var.get() if hasattr(self, "find_text_var") else ""
+        repl = self.replace_text_var.get() if hasattr(self, "replace_text_var") else ""
+        ranges = self.editor.tag_ranges("find_match")
+        if not needle or len(ranges) < 2:
+            self.find_next_in_editor()
+            ranges = self.editor.tag_ranges("find_match")
+        if not needle or len(ranges) < 2:
+            return
+        old = self.editor_text()
+        self.editor_undo_stack.append((old, "replace"))
+        self.editor.delete(ranges[0], ranges[1])
+        self.editor.insert(ranges[0], repl)
+        self.clear_find_marks()
+        self.on_editor_modified()
+        self.find_next_in_editor()
+
+    def replace_all_in_editor(self):
+        needle = self.find_text_var.get() if hasattr(self, "find_text_var") else ""
+        repl = self.replace_text_var.get() if hasattr(self, "replace_text_var") else ""
+        if not needle:
+            return
+        old = self.editor_text()
+        count = old.count(needle)
+        if count <= 0:
+            self.status.set(f"Not found: {needle}")
+            return
+        self.editor_undo_stack.append((old, f"replace all {needle}"))
+        self.replace_editor_text(old.replace(needle, repl), "replace all")
+        self.clear_find_marks()
+        self.status.set(f"Replaced {count} match(es). Press Save to write the file.")
 
     def editor_text(self):
         return self.editor.get("1.0", "end-1c") if hasattr(self, "editor") else ""
@@ -4570,6 +5285,14 @@ root.mainloop()
         self.settings["ahk_path_v2"] = self.ahk_path_v2.get().strip()
         self.settings["record_screenshots"] = self.record_screenshots.get()
         self.settings["record_replay_video"] = self.record_replay_video.get()
+        self.settings["record_replay_audio"] = self.record_replay_audio.get()
+        self.settings["replay_audio_device"] = self.replay_audio_device.get()
+        self.settings["allow_headset_mic_audio"] = self.allow_headset_mic_audio.get()
+        self.settings["ui_sounds_enabled"] = self.ui_sounds_enabled.get()
+        self.settings["click_sounds_enabled"] = self.click_sounds_enabled.get()
+        self.settings["tab_sounds_enabled"] = self.tab_sounds_enabled.get()
+        self.settings["loading_sound_enabled"] = self.loading_sound_enabled.get()
+        self.settings["show_data_paths"] = self.show_data_paths.get()
         if hasattr(self, "builder_background_image"):
             self.settings["builder_background_image"] = self.builder_background_image.get().strip()
         self.settings["auto_update"] = self.auto_update.get()
@@ -5191,6 +5914,96 @@ CodeHub • Built by Catchallcat5382
     def open_discord_support(self):
         webbrowser.open("https://discord.gg/ZqC32Bn68P")
 
+    def audio_device_names(self):
+        names = ["Default"]
+        self._audio_devices_cache = []
+        try:
+            import sounddevice as sd
+            for idx, dev in enumerate(sd.query_devices()):
+                if int(dev.get("max_input_channels", 0)) > 0:
+                    label = f"{idx}: {dev.get('name', 'Audio Device')}"
+                    names.append(label)
+                    self._audio_devices_cache.append((label, idx))
+        except Exception:
+            pass
+        return names
+
+    def selected_audio_device_index(self):
+        value = self.replay_audio_device.get()
+        if value == "Default":
+            return None
+        for label, idx in self._audio_devices_cache:
+            if label == value:
+                return idx
+        try:
+            return int(str(value).split(":", 1)[0])
+        except Exception:
+            return None
+
+    def selected_audio_device_label(self, device_index=None):
+        try:
+            import sounddevice as sd
+            if device_index is None:
+                default_input = sd.default.device[0] if isinstance(sd.default.device, (list, tuple)) else None
+                if default_input is None or int(default_input) < 0:
+                    return "Default input"
+                dev = sd.query_devices(int(default_input))
+                return f"Default input: {dev.get('name', 'Audio Device')}"
+            dev = sd.query_devices(int(device_index))
+            return str(dev.get("name", "Audio Device"))
+        except Exception:
+            value = self.replay_audio_device.get()
+            return value or "Default input"
+
+    def is_headset_audio_device(self, label):
+        text = str(label or "").lower()
+        risky = ("headset", "hands-free", "hands free", "headphones", "bluetooth", "airpods", "earbuds", "microphone", "mic ")
+        safe_loopback = ("stereo mix", "loopback", "virtual audio", "voicemeeter", "cable output", "monitor of")
+        return any(word in text for word in risky) and not any(word in text for word in safe_loopback)
+
+    def is_game_audio_device(self, label):
+        text = str(label or "").lower()
+        game_sources = ("stereo mix", "loopback", "virtual audio", "voicemeeter", "cable output", "monitor of", "what u hear")
+        mic_sources = ("microphone", "mic ", "headset", "hands-free", "hands free", "airpods", "earbuds")
+        return any(word in text for word in game_sources) and not any(word in text for word in mic_sources)
+
+    def refresh_audio_devices(self):
+        values = self.audio_device_names()
+        if hasattr(self, "audio_device_combo"):
+            self.audio_device_combo.configure(values=values)
+        if self.replay_audio_device.get() not in values:
+            self.replay_audio_device.set("Default")
+        self.save_permissions()
+
+    def toggle_data_paths(self):
+        self.show_data_paths.set(not self.show_data_paths.get())
+        self.settings["show_data_paths"] = self.show_data_paths.get()
+        write_json(SETTINGS_PATH, self.settings)
+        self.refresh_data_paths_info()
+
+    def refresh_data_paths_info(self):
+        if not hasattr(self, "data_paths_info"):
+            return
+        self.data_paths_info.configure(state="normal")
+        self.data_paths_info.delete("1.0", END)
+        if hasattr(self, "data_paths_toggle_btn"):
+            self.data_paths_toggle_btn.configure(text="Hide Data Paths" if self.show_data_paths.get() else "Show Data Paths")
+        if self.show_data_paths.get():
+            self.data_paths_info.insert(END, f"Settings  : {SETTINGS_PATH}\n")
+            self.data_paths_info.insert(END, f"Recordings: {RECORDINGS_PATH}\n")
+            self.data_paths_info.insert(END, f"Knowledge : {KNOWLEDGE_PATH}\n")
+            self.data_paths_info.insert(END, f"Exports   : {self.export_dir_var.get()}\n")
+            self.data_paths_info.insert(END, f"Videos    : {DATA_DIR / 'review_videos'}\n")
+            self.data_paths_info.insert(END, f"Screens   : {DATA_DIR / 'review_frames'}\n")
+            self.data_paths_info.insert(END, f"Audio     : {DATA_DIR / 'review_audio'}\n\n")
+        else:
+            self.data_paths_info.insert(END, "Data paths are hidden. Click Show Data Paths to reveal them.\n")
+            self.data_paths_info.insert(END, "Packaged CodeHub stores JSON/settings/replays in LocalAppData/CodeHub.\n")
+            self.data_paths_info.insert(END, "Source mode stores data beside the source folder.\n\n")
+        self.data_paths_info.insert(END, "Generated scripts include comments for hotkeys, editing, and watermark removal.\n")
+        self.data_paths_info.insert(END, "All recordings persist as JSON; they survive app restarts.\n")
+        self.data_paths_info.configure(state="disabled")
+
 
     def pick_theme_color(self, var):
         current = clamp_hex_color(var.get())
@@ -5244,6 +6057,10 @@ CodeHub • Built by Catchallcat5382
         self.root.attributes("-fullscreen", self.fullscreen.get())
 
     def close(self):
+        if self.current_editor_file and not Path(self.current_editor_file).exists():
+            self.current_editor_file = None
+            self.current_editor_saved_text = ""
+            self.editor_dirty = False
         if hasattr(self, "editor") and self.editor_dirty and not self.confirm_unsaved_editor():
             return
         if self.is_recording:
@@ -5261,3 +6078,4 @@ CodeHub • Built by Catchallcat5382
 if __name__ == "__main__":
     startup_console()
     CodeHubApp().run()
+

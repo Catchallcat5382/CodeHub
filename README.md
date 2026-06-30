@@ -16,8 +16,10 @@ It is designed around a simple workflow: record actions, save them as reusable s
 - Convert simple Python macro snippets to AutoHotkey v2 and AutoHotkey v2 snippets to Python.
 - Preview assistant-generated edits as a diff before staging them.
 - Undo assistant, converter, builder, or editor changes before saving.
-- Review recordings with event stats, input timelines, and optional screenshot frames.
-- Configure replay screenshot FPS from 30 up to 1000, with 60 as the default.
+- Review recordings with event stats, input timelines, optional screenshot frames, optional replay video, and optional audio WAV capture.
+- Configure replay screenshot FPS up to 240, with 60 as the default.
+- Use optional UI click/tab sounds and a loading sound from the `assets` folder.
+- Hide or show local data paths from Settings.
 - Check GitHub for updates from inside the app.
 - Enable optional auto-update on startup.
 

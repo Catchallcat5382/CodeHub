@@ -19,6 +19,13 @@ python -m PyInstaller `
     --name CodeHub `
     --icon $Icon `
     --add-data "$LogoAssets;assets" `
+    --hidden-import pygame `
+    --hidden-import sounddevice `
+    --hidden-import mss `
+    --hidden-import cv2 `
+    --hidden-import numpy `
+    --hidden-import PIL.Image `
+    --hidden-import PIL.ImageTk `
     --distpath $Dist `
     --workpath $Work `
     --specpath $BuildRoot `
