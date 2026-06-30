@@ -14,10 +14,10 @@ It is designed around a simple workflow: record actions, save them as reusable s
 - Browse, edit, rename, delete, and run scripts from the workspace.
 - Use a visual Code Builder to generate starter AutoHotkey v2 or Python Tkinter UI code.
 - Convert simple Python macro snippets to AutoHotkey v2 and AutoHotkey v2 snippets to Python.
-- Preview assistant-generated edits as a diff before applying them.
-- Undo assistant edits.
+- Preview assistant-generated edits as a diff before staging them.
+- Undo assistant, converter, builder, or editor changes before saving.
 - Review recordings with event stats, input timelines, and optional screenshot frames.
-- Configure replay screenshot FPS.
+- Configure replay screenshot FPS from 30 up to 1000, with 60 as the default.
 - Check GitHub for updates from inside the app.
 - Enable optional auto-update on startup.
 
@@ -36,6 +36,8 @@ Generated scripts include:
 CodeHub can check the public GitHub repository for a newer build. Manual update checks are available in Settings, and automatic update checks can be enabled there too.
 
 The distributed executable is a single-file build. Because it contains an embedded Python runtime and required packages, first startup can take longer than a normal native app while the runtime is prepared.
+
+Script edits are staged in the Workspace editor. Press Save to write them to disk, or choose Delete/Cancel when prompted if you try to leave with unsaved changes.
 
 ## Source Use
 

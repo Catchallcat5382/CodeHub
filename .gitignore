@@ -3,32 +3,33 @@ __pycache__/
 *.pyc
 *.py[cod]
 
-# Build / runtime junk
+# Runtime data
 data/
 exports/
+.codehub_runtime/
+.codehub_tools/
+_internal/
+
+# Build folders
 build/
 build_out/
-.codehub_runtime/
-_internal/
-.codehub_tools/
-CodeHubApp.spec
 *.spec
+CodeHubApp.spec
 
-# Logs / secrets
+# Logs, temp files, secrets
 publish_log.txt
-.env
 *.log
+.env
+CodeHub_apply_update.cmd
+CodeHub_local_update.cmd
 
-# Local-only helper scripts
+# Personal-only scripts
 Github.bat
+"GitHub Update.bat"
+"GitHub Downgrade.bat"
+"Publish to GitHub.bat"
 github_update.bat
 downgrade.bat
-GitHub Update.bat
-GitHub Downgrade.bat
-Publish to GitHub.bat
-
-# README source file
-README.txt
 
 # Windows junk
 Thumbs.db
