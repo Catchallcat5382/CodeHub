@@ -5907,6 +5907,9 @@ root.mainloop()
                 if reinstall:
                     self.download_and_apply_update(latest_sha, asset_url or GITHUB_MAIN_EXE_URL, latest_tag=version_label)
             return
+        if auto and not getattr(sys, "frozen", False):
+            self.status.set(f"Source update available    {version_label}    {short_sha}")
+            return
         if auto:
             should_update = True
         else:
@@ -5924,7 +5927,12 @@ root.mainloop()
 
     def download_and_apply_update(self, latest_sha, asset_url=None, latest_tag=None):
         if not getattr(sys, "frozen", False):
-            messagebox.showinfo(APP_NAME, "Source mode detected. CodeHub will run the local updater/rebuilder instead of replacing the running source script.")
+            messagebox.showinfo(
+                APP_NAME,
+                "Source mode detected.\n\n"
+                "CodeHub will run the local updater/rebuilder instead of replacing the running source script. "
+                "Auto-update startup will not force-close source mode anymore.",
+            )
             self.run_local_updater()
             return
 
