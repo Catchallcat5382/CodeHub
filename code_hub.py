@@ -5882,6 +5882,11 @@ root.mainloop()
                     latest_tag = build_version(BUILD_NUMBER)
                 asset_url = GITHUB_MAIN_EXE_URL
                 current_sha = current_update_sha() or str(self.settings.get("last_update_sha", "") or "").strip()
+                if not current_sha and str(latest_tag or "").strip() == build_version(BUILD_NUMBER):
+                    self.settings["last_update_sha"] = latest_sha
+                    self.settings["last_update_tag"] = latest_tag
+                    write_json(SETTINGS_PATH, self.settings)
+                    current_sha = latest_sha
                 has_update = bool(latest_sha and latest_sha != current_sha)
                 self.root.after(0, lambda: self.finish_update_check(latest_sha, has_update, auto, asset_url, latest_tag))
             except Exception as exc:
@@ -5921,7 +5926,7 @@ root.mainloop()
                 "Download the latest CodeHub.exe now?",
             )
         if should_update:
-            self.download_and_apply_update(latest_sha, asset_url or GITHUB_EXE_URL, latest_tag=version_label)
+            self.download_and_apply_update(latest_sha, asset_url or GITHUB_MAIN_EXE_URL, latest_tag=version_label)
         else:
             self.status.set(f"Update available    {version_label}    {short_sha}")
 
@@ -5942,7 +5947,7 @@ root.mainloop()
         cmd_path = app_dir / "CodeHub_apply_update.cmd"
         current_pid = os.getpid()
 
-        asset_url = asset_url or GITHUB_EXE_URL
+        asset_url = asset_url or GITHUB_MAIN_EXE_URL
         latest_sha = str(latest_sha or "").strip()
         latest_tag = str(latest_tag or "")
         settings_path = SETTINGS_PATH
