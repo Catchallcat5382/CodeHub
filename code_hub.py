@@ -6060,7 +6060,7 @@ root.mainloop()
 
         if os.name == "nt":
             subprocess.Popen(
-                ["cmd.exe", "/k", "call", str(cmd_path)],
+                ["cmd.exe", "/c", "call", str(cmd_path)],
                 cwd=str(app_dir),
                 creationflags=subprocess.CREATE_NEW_CONSOLE
             )
@@ -6159,7 +6159,7 @@ root.mainloop()
 
         if os.name == "nt":
             subprocess.Popen(
-                ["cmd.exe", "/k", "call", str(cmd_path)],
+                ["cmd.exe", "/c", "call", str(cmd_path)],
                 cwd=str(app_dir),
                 creationflags=subprocess.CREATE_NEW_CONSOLE
             )
