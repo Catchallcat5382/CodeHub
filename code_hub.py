@@ -5932,7 +5932,8 @@ root.mainloop()
             self.status.set(f"Source update available    {version_label}    {short_sha}")
             return
         if auto:
-            should_update = True
+            self.status.set(f"Update available    {version_label}    {short_sha}")
+            return
         else:
             should_update = messagebox.askyesno(
                 APP_NAME,
