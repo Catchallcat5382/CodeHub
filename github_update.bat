@@ -22,8 +22,7 @@ if not exist ".git" (
     exit /b 1
 )
 
-echo [GITIGNORE] Writing ignore rules...
-
+echo [GITIGNORE] Writing personal publish ignore rules...
 (
 echo # Python
 echo __pycache__/
@@ -52,9 +51,10 @@ echo CodeHub_local_update.cmd
 echo.
 echo # Personal-only scripts
 echo Github.bat
-echo GitHub Update.bat
-echo GitHub Downgrade.bat
-echo Publish to GitHub.bat
+echo "GitHub Update.bat"
+echo "GitHub Downgrade.bat"
+echo "Publish to GitHub.bat"
+echo github_update.bat
 echo downgrade.bat
 echo.
 echo # Windows junk
@@ -63,8 +63,7 @@ echo Desktop.ini
 echo *.lnk
 ) > ".gitignore"
 
-echo [CLEAN] Removing local-only files...
-
+echo [CLEAN] Removing local-only files from the repo worktree...
 for %%F in (
     "README.txt"
     "CodeHubApp.spec"
@@ -93,31 +92,7 @@ for %%D in (
 
 git rm -r --cached .codehub_tools .codehub_runtime _internal build data exports __pycache__ README.txt CodeHubApp.spec "GitHub Update.bat" "GitHub Downgrade.bat" Github.bat "Publish to GitHub.bat" publish_log.txt CodeHub_apply_update.cmd CodeHub_local_update.cmd >nul 2>&1
 
-if not exist "code_hub.py" (
-    echo [FAIL] code_hub.py was not copied into repo.
-    echo Check that your real file is named code_hub.py inside:
-    echo F:\Auto Hotkey\Python\CodeHub
-    pause
-    exit /b 1
-)
-
-echo [VERSION] Updating build number...
-
-for /f %%C in ('git rev-list --count HEAD 2^>nul') do set "COMMIT_COUNT=%%C"
-if "%COMMIT_COUNT%"=="" set "COMMIT_COUNT=0"
-set /a NEXT_BUILD=COMMIT_COUNT+1
-
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$p='code_hub.py';" ^
-  "$t=Get-Content $p -Raw;" ^
-  "if ($t -match 'BUILD_NUMBER\s*=\s*\d+') {" ^
-  "  $t=$t -replace 'BUILD_NUMBER\s*=\s*\d+', 'BUILD_NUMBER = %NEXT_BUILD%';" ^
-  "} else {" ^
-  "  $t='BUILD_NUMBER = %NEXT_BUILD%' + [Environment]::NewLine + $t;" ^
-  "}" ^
-  "Set-Content $p $t -Encoding UTF8;"
-
-echo [VERSION] Build number: %NEXT_BUILD%
+echo [VERSION] Build number is already baked into the copied source and exe.
 
 echo [GIT] Staging files...
 git add -A
@@ -130,7 +105,7 @@ echo.
 git diff --cached --quiet
 if not errorlevel 1 (
     echo [DONE] Nothing to commit.
-    pause
+    timeout /t 2 /nobreak >nul
     exit /b 0
 )
 
@@ -145,7 +120,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [GIT] Pushing to origin main...
+echo [GIT] Pushing to origin/main...
 git push origin main
 if errorlevel 1 (
     echo [FAIL] Push failed.
@@ -155,5 +130,5 @@ if errorlevel 1 (
 
 echo.
 echo [DONE] GitHub updated successfully.
-pause
+timeout /t 2 /nobreak >nul
 exit /b 0
