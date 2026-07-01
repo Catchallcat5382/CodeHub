@@ -370,7 +370,7 @@ def startup_console():
     print(f"[ROOT] BUNDLE_ROOT = {BUNDLE_ROOT}", flush=True)
     print(f"[ROOT] ASSET_DIR   = {ASSET_DIR}", flush=True)
     print(f"[ROOT] DATA_DIR    = {DATA_DIR}", flush=True)
-    print("[NOTE] This console ", flush=True)
+    print("[NOTE] This console stays open for diagnostics.", flush=True)
     print("-" * 78, flush=True)
 
     lines = [
@@ -5959,9 +5959,9 @@ root.mainloop()
 
         exe_path = Path(sys.executable).resolve()
         app_dir = exe_path.parent
-        tmp_exe = app_dir / "CodeHub_update_tmp.exe"
         cmd_path = app_dir / "CodeHub_apply_update.cmd"
         current_pid = os.getpid()
+        tmp_exe = Path(tempfile.gettempdir()) / f"CodeHub_update_{current_pid}.exe"
 
         asset_url = asset_url or GITHUB_MAIN_EXE_URL
         latest_sha = str(latest_sha or "").strip()
