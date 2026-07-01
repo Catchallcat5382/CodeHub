@@ -68,7 +68,7 @@ GITHUB_API_MAIN_SOURCE = f"https://api.github.com/repos/{GITHUB_REPO}/contents/c
 GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest/download/CodeHub.exe"
 GITHUB_MAIN_EXE_URL = f"https://github.com/{GITHUB_REPO}/raw/main/CodeHub.exe"
 BUILD_COMMIT = "local-build"
-BUILD_NUMBER = 47
+BUILD_NUMBER = 49
 MAX_REPLAY_FPS = 240
 REPLAY_FPS_CHOICES = ["15", "20", "24", "30", "60", "120", "144", "240"]
 
@@ -6943,6 +6943,7 @@ CodeHub • Built by Catchallcat5382
 if __name__ == "__main__":
     startup_console()
     CodeHubApp().run()
+
 
 
 
