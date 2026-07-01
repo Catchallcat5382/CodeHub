@@ -131,6 +131,21 @@ def saved_update_sha(settings=None):
         pass
     return ""
 
+
+def remember_update_sha(settings, sha, tag=None):
+    sha = str(sha or "").strip()
+    if not sha:
+        return
+    if settings is not None:
+        settings["last_update_sha"] = sha
+        if tag:
+            settings["last_update_tag"] = str(tag)
+        write_json(SETTINGS_PATH, settings)
+    try:
+        UPDATE_MARKER_PATH.write_text(sha, encoding="utf-8")
+    except Exception:
+        pass
+
 DEFAULT_SETTINGS = {
     "export_dir": str(EXPORT_DIR),
     "default_script_name": "MyMacro",
@@ -5897,15 +5912,15 @@ root.mainloop()
                 latest_tag = build_version(BUILD_NUMBER)
                 asset_url = GITHUB_MAIN_EXE_URL
                 current_sha = saved_update_sha(self.settings)
-                if not current_sha:
-                    self.settings["last_update_sha"] = latest_sha
-                    self.settings["last_update_tag"] = latest_tag
-                    write_json(SETTINGS_PATH, self.settings)
-                    try:
-                        UPDATE_MARKER_PATH.write_text(latest_sha, encoding="utf-8")
-                    except Exception:
-                        pass
+
+                # Single-file local builds cannot safely prove their embedded commit.
+                # If we let a stale marker win, CodeHub offers to reinstall itself even
+                # when the user is already running the newest compiled exe, creating an
+                # update loop. Treat local-build exes as current and repair the marker.
+                if not current_update_sha() and current_sha != latest_sha:
+                    remember_update_sha(self.settings, latest_sha, latest_tag)
                     current_sha = latest_sha
+
                 has_update = bool(latest_sha and latest_sha != current_sha)
                 self.root.after(0, lambda: self.finish_update_check(latest_sha, has_update, auto, asset_url, latest_tag))
             except Exception as exc:
