@@ -13,6 +13,7 @@ import textwrap
 import urllib.request
 import webbrowser
 import ssl
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from tkinter import (
@@ -62,6 +63,8 @@ MAKER_NAME = "Macro Maker"
 GITHUB_REPO = "Catchallcat5382/CodeHub"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
 GITHUB_API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+GITHUB_API_MAIN_EXE = f"https://api.github.com/repos/{GITHUB_REPO}/contents/CodeHub.exe?ref=main"
+GITHUB_API_MAIN_SOURCE = f"https://api.github.com/repos/{GITHUB_REPO}/contents/code_hub.py?ref=main"
 GITHUB_EXE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest/download/CodeHub.exe"
 GITHUB_MAIN_EXE_URL = f"https://github.com/{GITHUB_REPO}/raw/main/CodeHub.exe"
 BUILD_COMMIT = "local-build"
@@ -385,7 +388,7 @@ def startup_console():
     print(f"[ROOT] BUNDLE_ROOT = {BUNDLE_ROOT}", flush=True)
     print(f"[ROOT] ASSET_DIR   = {ASSET_DIR}", flush=True)
     print(f"[ROOT] DATA_DIR    = {DATA_DIR}", flush=True)
-    print("[NOTE] This console ", flush=True)
+    print("[NOTE] This console stays open for diagnostics.", flush=True)
     print("-" * 78, flush=True)
 
     lines = [
@@ -572,6 +575,13 @@ def github_json_request(url, timeout=15):
             errors.append(f"PowerShell HTTPS: {exc}")
 
     raise RuntimeError("Could not reach GitHub for updates.\n\n" + "\n".join(errors[-3:]))
+
+
+def git_blob_sha_for_file(path):
+    path = Path(path)
+    data = path.read_bytes()
+    header = f"blob {len(data)}\0".encode("utf-8")
+    return hashlib.sha1(header + data).hexdigest()
 
 
 def first_asset_named(stem):
@@ -5891,6 +5901,14 @@ root.mainloop()
             raise RuntimeError("GitHub did not return a commit SHA.")
         return sha
 
+    def latest_github_file_sha(self):
+        api_url = GITHUB_API_MAIN_EXE if getattr(sys, "frozen", False) else GITHUB_API_MAIN_SOURCE
+        payload = github_json_request(api_url, timeout=15)
+        sha = str(payload.get("sha", "")).strip()
+        if not sha:
+            raise RuntimeError("GitHub did not return a file SHA.")
+        return sha
+
     def latest_github_release(self):
         payload = github_json_request(GITHUB_API_LATEST_RELEASE, timeout=15)
         tag = str(payload.get("tag_name", "")).strip()
@@ -5904,25 +5922,20 @@ root.mainloop()
         return tag, asset_url
 
     def check_for_updates(self, auto=False):
-        self.status.set("Checking GitHub commit for updates...")
+        self.status.set("Checking GitHub file for updates...")
 
         def worker():
             try:
-                latest_sha = self.latest_github_sha()
+                latest_commit = self.latest_github_sha()
+                latest_sha = self.latest_github_file_sha()
                 latest_tag = build_version(BUILD_NUMBER)
                 asset_url = GITHUB_MAIN_EXE_URL
-                current_sha = saved_update_sha(self.settings)
-
-                # Single-file local builds cannot safely prove their embedded commit.
-                # If we let a stale marker win, CodeHub offers to reinstall itself even
-                # when the user is already running the newest compiled exe, creating an
-                # update loop. Treat local-build exes as current and repair the marker.
-                if not current_update_sha() and current_sha != latest_sha:
-                    remember_update_sha(self.settings, latest_sha, latest_tag)
-                    current_sha = latest_sha
-
+                local_path = Path(sys.executable) if getattr(sys, "frozen", False) else Path(__file__).resolve()
+                current_sha = git_blob_sha_for_file(local_path)
                 has_update = bool(latest_sha and latest_sha != current_sha)
-                self.root.after(0, lambda: self.finish_update_check(latest_sha, has_update, auto, asset_url, latest_tag))
+                if not has_update:
+                    remember_update_sha(self.settings, latest_commit, latest_tag)
+                self.root.after(0, lambda: self.finish_update_check(latest_commit, has_update, auto, asset_url, latest_tag, latest_sha, current_sha))
             except Exception as exc:
                 if not auto:
                     self.root.after(0, lambda: messagebox.showerror(APP_NAME, f"Update check failed:\n{exc}"))
@@ -5930,24 +5943,27 @@ root.mainloop()
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def finish_update_check(self, latest_sha, has_update, auto, asset_url=None, latest_tag=None):
+    def finish_update_check(self, latest_sha, has_update, auto, asset_url=None, latest_tag=None, remote_file_sha=None, local_file_sha=None):
         short_sha = str(latest_sha or "")[:7]
+        short_remote_file = str(remote_file_sha or "")[:7]
+        short_local_file = str(local_file_sha or "")[:7]
         version_label = str(latest_tag or build_version(BUILD_NUMBER))
         if not has_update:
-            self.status.set(f"Already up to date    {version_label}    {short_sha}")
+            self.status.set(f"Already up to date    {version_label}    {short_sha}    file {short_local_file}")
             if not auto:
                 messagebox.showinfo(
                     APP_NAME,
                     "CodeHub is already up to date.\n\n"
                     f"Version: {version_label}\n"
-                    f"Commit: {short_sha}",
+                    f"Commit: {short_sha}\n"
+                    f"File: {short_local_file}",
                 )
             return
         if auto and not getattr(sys, "frozen", False):
-            self.status.set(f"Source update available    {version_label}    {short_sha}")
+            self.status.set(f"Source update available    {version_label}    {short_sha}    file {short_remote_file}")
             return
         if auto:
-            self.status.set(f"Update available    {version_label}    {short_sha}")
+            self.status.set(f"Update available    {version_label}    {short_sha}    file {short_remote_file}")
             return
         else:
             should_update = messagebox.askyesno(
@@ -5955,6 +5971,8 @@ root.mainloop()
                 "Update found on GitHub.\n\n"
                 f"Version label: {version_label}\n"
                 f"Latest commit: {short_sha}\n\n"
+                f"Your file: {short_local_file}\n"
+                f"GitHub file: {short_remote_file}\n\n"
                 "Download the latest CodeHub.exe now?",
             )
         if should_update:
@@ -6925,7 +6943,6 @@ CodeHub • Built by Catchallcat5382
 if __name__ == "__main__":
     startup_console()
     CodeHubApp().run()
-
 
 
 
