@@ -4593,6 +4593,8 @@ class CodeHubApp:
         self.status.set("Ready")
 
     def watch_external_macros(self):
+        if getattr(self, "update_in_progress", False):
+            return
         if self.macro_locked:
             return
         now = time.time()
@@ -5961,7 +5963,6 @@ root.mainloop()
             return
         if auto and not getattr(sys, "frozen", False):
             self.status.set(f"Source update available    {version_label}    {short_sha}    file {short_remote_file}")
-            self.root.after(500, lambda: self.download_and_apply_update(latest_sha, asset_url or GITHUB_MAIN_EXE_URL, latest_tag=version_label))
             return
         if auto:
             self.status.set(f"Update available    {version_label}    {short_sha}    file {short_remote_file}")
@@ -5987,11 +5988,23 @@ root.mainloop()
             messagebox.showinfo(
                 APP_NAME,
                 "Source mode detected.\n\n"
-                "CodeHub will run the local updater/rebuilder instead of replacing the running source script. "
-                "Auto-update startup will not force-close source mode anymore.",
+                "GitHub has a different source file, but source mode will not replace itself. "
+                "Use Github.bat to rebuild/push a compiled app update, or run AppUpdater.bat to rebuild your local exe.",
             )
-            self.run_local_updater()
             return
+
+        self.update_in_progress = True
+        self.macro_locked = False
+        self.macro_process = None
+        self.macro_lock_kind = "process"
+        self.update_in_progress = False
+        try:
+            if self.lock_overlay and self.lock_overlay.winfo_exists():
+                self.lock_overlay.destroy()
+        except Exception:
+            pass
+        self.lock_overlay = None
+        self.lock_window = None
 
         exe_path = Path(sys.executable).resolve()
         app_dir = exe_path.parent
