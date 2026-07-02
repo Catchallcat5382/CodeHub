@@ -25,9 +25,10 @@ CodeHub_local_update.cmd
 
 # Personal-only scripts
 Github.bat
-GitHub Update.bat
-GitHub Downgrade.bat
-Publish to GitHub.bat
+"GitHub Update.bat"
+"GitHub Downgrade.bat"
+"Publish to GitHub.bat"
+github_update.bat
 downgrade.bat
 
 # Windows junk
